@@ -112,21 +112,85 @@ class Database:
             );
             """)
 
+            # CCTV Cameras table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS cctv_cameras (
+                camera_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                latitude REAL NOT NULL,
+                longitude REAL NOT NULL,
+                road_segment TEXT,
+                status TEXT DEFAULT 'ACTIVE',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """)
+
+            # CCTV Detections table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS cctv_detections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                camera_id TEXT NOT NULL,
+                timestamp REAL NOT NULL,
+                frame_index INTEGER,
+                image_file TEXT,
+                confidence REAL NOT NULL,
+                box_json TEXT,
+                defect_type TEXT DEFAULT 'suspected visual road defect',
+                latitude REAL NOT NULL,
+                longitude REAL NOT NULL,
+                hazard_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (hazard_id) REFERENCES hazards(id) ON DELETE SET NULL,
+                FOREIGN KEY (camera_id) REFERENCES cctv_cameras(camera_id)
+            );
+            """)
+
+            # Ensure fusion columns exist on hazards
+            cursor.execute("PRAGMA table_info(hazards)")
+            hazard_columns = [col[1] for col in cursor.fetchall()]
+
+            fusion_cols = [
+                ("visual_evidence_score", "REAL DEFAULT 0.0"),
+                ("smartphone_evidence_score", "REAL DEFAULT 0.0"),
+                ("fusion_status", "TEXT DEFAULT 'IMPACT_ONLY'"),
+                ("cctv_detections_count", "INTEGER DEFAULT 0"),
+                ("last_cctv_image", "TEXT")
+            ]
+            for col_name, col_type in fusion_cols:
+                if col_name not in hazard_columns:
+                    cursor.execute(f"ALTER TABLE hazards ADD COLUMN {col_name} {col_type};")
+
+            # Pre-seed default cameras if empty
+            cursor.execute("SELECT COUNT(*) FROM cctv_cameras")
+            if cursor.fetchone()[0] == 0:
+                default_cams = [
+                    ("CAM-SRM-MAIN", "SRMIST Main Gate Corridor", 12.823050, 80.044200, "SRM Main Avenue"),
+                    ("CAM-POTHERI-STN", "Potheri Station Crossing", 12.825200, 80.046800, "Station Road"),
+                    ("CAM-GST-SERVICE", "GST Road Service Lane Cam 1", 12.821500, 80.041800, "NH45 Service Lane")
+                ]
+                cursor.executemany("""
+                    INSERT INTO cctv_cameras (camera_id, name, latitude, longitude, road_segment)
+                    VALUES (?, ?, ?, ?, ?)
+                """, default_cams)
+
             # Helpful indices for spatial and temporal queries
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_ts ON events(timestamp);")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_hazard ON events(hazard_id);")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_hazards_loc ON hazards(latitude, longitude);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_cctv_cam ON cctv_detections(camera_id);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_cctv_loc ON cctv_detections(latitude, longitude);")
 
             conn.commit()
 
     def reset_all(self):
-        """Clear all events, hazards, and calibrations (useful for demo resets)."""
+        """Clear all events, hazards, calibrations, and CCTV detections."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM events;")
             cursor.execute("DELETE FROM hazards;")
             cursor.execute("DELETE FROM calibrations;")
-            cursor.execute("DELETE FROM sqlite_sequence WHERE name IN ('events', 'hazards', 'calibrations');")
+            cursor.execute("DELETE FROM cctv_detections;")
+            cursor.execute("DELETE FROM sqlite_sequence WHERE name IN ('events', 'hazards', 'calibrations', 'cctv_detections');")
             conn.commit()
 
     def record_calibration(self, device_id: str, baseline_mean: float, baseline_std: float,
@@ -405,6 +469,12 @@ class Database:
             cursor.execute("SELECT COUNT(DISTINCT trip_id) FROM events")
             total_trips = cursor.fetchone()[0]
 
+            cursor.execute("SELECT COUNT(*) FROM cctv_detections")
+            total_cctv = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COUNT(*) FROM hazards WHERE fusion_status = 'DUAL_CONFIRMED'")
+            dual_confirmed = cursor.fetchone()[0]
+
             return {
                 "total_events": total_events,
                 "high_severity_events": high_count,
@@ -413,5 +483,94 @@ class Database:
                 "total_hazards": total_hazards,
                 "avg_dynamic_acceleration": avg_accel,
                 "unique_devices": total_devices,
-                "unique_trips": total_trips
+                "unique_trips": total_trips,
+                "total_cctv_detections": total_cctv,
+                "dual_confirmed_hazards": dual_confirmed
             }
+
+    def get_cameras(self) -> List[Dict[str, Any]]:
+        """Retrieve list of configured CCTV cameras with their GPS locations."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM cctv_cameras ORDER BY camera_id")
+            return [dict(row) for row in cursor.fetchall()]
+
+    def add_camera(self, camera_id: str, name: str, latitude: float, longitude: float, road_segment: str = "") -> Dict[str, Any]:
+        """Configure or register a CCTV camera with its associated GPS coordinates."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO cctv_cameras (camera_id, name, latitude, longitude, road_segment)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(camera_id) DO UPDATE SET
+                    name = excluded.name,
+                    latitude = excluded.latitude,
+                    longitude = excluded.longitude,
+                    road_segment = excluded.road_segment
+            """, (camera_id, name, latitude, longitude, road_segment))
+            conn.commit()
+            return {
+                "camera_id": camera_id,
+                "name": name,
+                "latitude": latitude,
+                "longitude": longitude,
+                "road_segment": road_segment
+            }
+
+    def record_cctv_detection(self, data: Dict[str, Any]) -> int:
+        """Store a CCTV visual detection record in database."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO cctv_detections (
+                    camera_id, timestamp, frame_index, image_file,
+                    confidence, box_json, defect_type, latitude, longitude, hazard_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                data["camera_id"],
+                float(data["timestamp"]),
+                int(data.get("frame_index", 0)),
+                data.get("image_file", ""),
+                float(data["confidence"]),
+                str(data.get("box", [])),
+                data.get("defect_type", "suspected visual road defect"),
+                float(data["latitude"]),
+                float(data["longitude"]),
+                data.get("hazard_id")
+            ))
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_cctv_detections(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Retrieve recent CCTV visual detection events."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM cctv_detections ORDER BY id DESC LIMIT ?
+            """, (limit,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def update_hazard_fusion(
+        self,
+        hazard_id: int,
+        visual_score: float,
+        phone_score: float,
+        combined_conf: float,
+        fusion_status: str,
+        last_image: Optional[str] = None,
+        cctv_count: int = 0
+    ):
+        """Update multi-modal fusion scores on a road hazard cluster."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE hazards SET
+                    visual_evidence_score = ?,
+                    smartphone_evidence_score = ?,
+                    confidence_score = ?,
+                    fusion_status = ?,
+                    last_cctv_image = COALESCE(?, last_cctv_image),
+                    cctv_detections_count = ?
+                WHERE id = ?
+            """, (visual_score, phone_score, combined_conf, fusion_status, last_image, cctv_count, hazard_id))
+            conn.commit()

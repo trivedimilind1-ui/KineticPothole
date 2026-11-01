@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>KineticPothole — Intelligent Road Impact Detection & Mapping System</title>
+    <title>KineticPothole — Multi-Modal Road Impact & CCTV AI Detection System</title>
     
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
@@ -23,7 +23,7 @@
             <div class="brand-logo">
                 <div class="logo-pulse"></div>
                 <span class="logo-text">KINETIC<span class="logo-accent">POTHOLE</span></span>
-                <span class="version-tag">PROD v1.1</span>
+                <span class="version-tag">AI FUSION v2.0</span>
             </div>
             <div class="status-indicator-wrap">
                 <span id="systemStatusDot" class="status-dot standby"></span>
@@ -32,13 +32,16 @@
         </div>
 
         <div class="nav-center">
-            <!-- Dedicated Mode Switch: Live Phone vs Judge Demo Mode -->
+            <!-- 3-Mode Switcher: Live Smartphone, Judge Demo, CCTV AI Monitoring -->
             <div class="mode-switch-container">
                 <button id="modeLiveBtn" class="mode-tab-btn active" data-mode="live">
-                    <span class="tab-icon">📱</span> Live Phone Mode
+                    <span class="tab-icon">📱</span> Smartphone Mode
                 </button>
                 <button id="modeDemoBtn" class="mode-tab-btn" data-mode="demo">
                     <span class="tab-icon">🎬</span> Judge Demo Mode
+                </button>
+                <button id="modeCctvBtn" class="mode-tab-btn" data-mode="cctv">
+                    <span class="tab-icon">📹</span> CCTV AI Monitoring
                 </button>
             </div>
         </div>
@@ -49,7 +52,7 @@
                 <span class="btn-icon">📽️</span> Presentation Mode
             </button>
             <button id="startDetectionBtn" class="btn btn-primary">
-                <span class="btn-icon">▶</span> Start Live Detection
+                <span class="btn-icon">▶</span> Start Live Phone
             </button>
             <button id="stopDetectionBtn" class="btn btn-danger" disabled>
                 <span class="btn-icon">⏹</span> Stop Detection
@@ -60,7 +63,7 @@
             <button id="qrModalBtn" class="btn btn-ghost" title="Connect Phone via Wi-Fi">
                 <span class="btn-icon">🔗</span> Phone Sync
             </button>
-            <button id="resetDemoBtn" class="btn btn-ghost-danger" title="Clear All Demo Data">
+            <button id="resetDemoBtn" class="btn btn-ghost-danger" title="Clear All Data">
                 <span class="btn-icon">🔄</span> Reset Demo
             </button>
         </div>
@@ -97,7 +100,7 @@
         <button id="closeNoticeBtn" class="notice-close">&times;</button>
     </div>
 
-    <!-- Judge Demo Control Strip (Displayed prominently in Demo Mode) -->
+    <!-- Judge Demo Control Strip (Displayed in Demo Mode) -->
     <div id="demoControlStrip" class="demo-strip hidden">
         <div class="demo-strip-header">
             <div class="demo-tag-badge">JUDGE DEMO PIPELINE</div>
@@ -105,7 +108,6 @@
         </div>
         
         <div class="demo-scenarios-row">
-            <!-- Button 1: Normal Road -->
             <button id="demoNormalBtn" class="scenario-btn scenario-normal">
                 <div class="scenario-icon">🟢</div>
                 <div class="scenario-meta">
@@ -114,7 +116,6 @@
                 </div>
             </button>
 
-            <!-- Button 2: Speed Breaker -->
             <button id="demoSpeedBreakerBtn" class="scenario-btn scenario-speedbreaker">
                 <div class="scenario-icon">🟡</div>
                 <div class="scenario-meta">
@@ -123,7 +124,6 @@
                 </div>
             </button>
 
-            <!-- Button 3: Pothole-like Impact -->
             <button id="demoPotholeBtn" class="scenario-btn scenario-pothole">
                 <div class="scenario-icon">🔴</div>
                 <div class="scenario-meta">
@@ -150,13 +150,149 @@
                     <span id="demoProgressText" class="progress-text">0 / 0</span>
                 </div>
                 <button id="resetDemoFromStripBtn" class="btn btn-sm btn-outline-danger" title="Clear Data">
-                    Reset Demo
+                    Reset
                 </button>
             </div>
         </div>
         <div id="demoActiveDatasetBadge" class="demo-active-badge hidden">
             <span>Active Dataset: </span><strong id="activeDatasetName">None</strong> • 
             <span class="badge-simulated-indicator">⚠️ Clearly Labeled Simulated Data (Never Claimed Real)</span>
+        </div>
+    </div>
+
+    <!-- CCTV AI Road Damage Monitoring Panel (Displayed in CCTV Mode) -->
+    <div id="cctvMonitoringPanel" class="cctv-panel hidden">
+        <div class="cctv-panel-header">
+            <div class="cctv-title-wrap">
+                <span class="cctv-badge">CCTV AI ROAD DAMAGE MODULE</span>
+                <h2>Traffic Camera Video Extraction & YOLO Vision Analysis</h2>
+            </div>
+            <div class="privacy-shield-banner">
+                <span class="shield-icon">🛡️</span>
+                <span><strong>Privacy Shield:</strong> AI ROI restricted to asphalt road surface. Faces & vehicle occupants excluded.</span>
+            </div>
+        </div>
+
+        <!-- CCTV Control Bar -->
+        <div class="cctv-controls-bar">
+            <div class="cctv-control-group">
+                <label>Select Traffic Camera:</label>
+                <select id="cctvCameraSelect" class="strip-select">
+                    <option value="CAM-GST-SERVICE">CAM-GST-SERVICE — GST Road Service Lane (12.821500, 80.041800)</option>
+                    <option value="CAM-SRM-MAIN">CAM-SRM-MAIN — SRMIST Main Gate Corridor (12.823050, 80.044200)</option>
+                    <option value="CAM-POTHERI-STN">CAM-POTHERI-STN — Potheri Station Crossing (12.825200, 80.046800)</option>
+                </select>
+                <button id="openConfigCameraBtn" class="btn btn-xs btn-outline">Configure GPS</button>
+            </div>
+
+            <div class="cctv-control-group">
+                <label>Video Footage:</label>
+                <select id="cctvVideoSelect" class="strip-select">
+                    <option value="sample_cctv_pothole.mp4">Prerecorded CCTV Road Footage (10s Corridor)</option>
+                </select>
+                <label for="customVideoUploadInput" class="btn btn-xs btn-outline">Upload Video</label>
+                <input type="file" id="customVideoUploadInput" accept="video/mp4,video/avi" class="hidden">
+            </div>
+
+            <div class="cctv-control-group">
+                <label>Frame Interval:</label>
+                <select id="cctvIntervalSelect" class="strip-select">
+                    <option value="0.5">0.5 sec (2 FPS)</option>
+                    <option value="1.0" selected>1.0 sec (1 FPS)</option>
+                    <option value="2.0">2.0 sec (0.5 FPS)</option>
+                </select>
+            </div>
+
+            <div class="cctv-action-group">
+                <button id="runCctvDetectionBtn" class="btn btn-sm btn-primary">
+                    <span class="btn-icon">▶</span> Run AI Detection
+                </button>
+                <button id="runFusionBtn" class="btn btn-sm btn-secondary">
+                    <span class="btn-icon">⚡</span> Run Sensor Fusion
+                </button>
+            </div>
+        </div>
+
+        <!-- CCTV Video & AI Bounding Box Split Screen -->
+        <div class="cctv-viewer-grid">
+            <!-- Left: Video Player -->
+            <div class="cctv-card">
+                <div class="cctv-card-header">
+                    <h3>Prerecorded Traffic Camera Feed</h3>
+                    <span id="cctvCameraIdBadge" class="camera-id-pill">CAM-GST-SERVICE</span>
+                </div>
+                <div class="video-container">
+                    <video id="cctvVideoPlayer" controls muted playsinline preload="auto">
+                        <source src="/data/sample_cctv_pothole.mp4" type="video/mp4">
+                        Your browser does not support the video tag.
+                    </video>
+                </div>
+            </div>
+
+            <!-- Right: AI Annotated Frame with Bounding Boxes -->
+            <div class="cctv-card">
+                <div class="cctv-card-header">
+                    <h3>AI Detected Bounding Boxes & Confidence</h3>
+                    <span id="visualDefectCountBadge" class="badge-defect-count">0 Defect Frames</span>
+                </div>
+                <div class="annotated-frame-container">
+                    <img id="cctvAnnotatedFrame" src="" alt="CCTV AI Detection Preview" class="annotated-img hidden">
+                    <div id="cctvPlaceholder" class="cctv-placeholder">
+                        <span class="placeholder-icon">📹</span>
+                        <p>Click <strong>"Run AI Detection"</strong> to extract road frames, analyze asphalt contours, and draw bounding boxes around suspected damage.</p>
+                    </div>
+                    <div id="cctvDetectionBanner" class="cctv-detection-banner hidden">
+                        <span id="cctvLabelText">DEFECT DETECTED</span>
+                        <span id="cctvConfText">Confidence: 82%</span>
+                        <span class="disclaimer-small">Suspected visual defect (Not confirmed until physical impact fusion)</span>
+                    </div>
+                </div>
+
+                <!-- Extracted Frame Thumbnail Carousel -->
+                <div class="frame-carousel-wrapper">
+                    <span class="carousel-label">Analyzed Frames with Detections:</span>
+                    <div id="frameCarousel" class="frame-carousel">
+                        <span class="text-muted">No frames analyzed yet.</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Multi-Modal Sensor Fusion Results Bar -->
+        <div class="fusion-summary-card">
+            <div class="fusion-header">
+                <div class="fusion-title-wrap">
+                    <span class="fusion-icon">⚡</span>
+                    <h3>Multi-Modal Sensor Fusion Engine Status</h3>
+                </div>
+                <span id="fusionStatusPill" class="fusion-status-pill pill-standby">AWAITING FUSION</span>
+            </div>
+
+            <div class="fusion-metrics-grid">
+                <div class="f-metric">
+                    <span class="f-label">VISUAL EVIDENCE (CCTV)</span>
+                    <strong class="f-val text-accent" id="fusionVisualScore">0.00</strong>
+                    <span class="f-sub" id="fusionVisualSub">No camera detections</span>
+                </div>
+                <div class="f-metric">
+                    <span class="f-label">PHYSICAL EVIDENCE (PHONE)</span>
+                    <strong class="f-val text-warning" id="fusionPhoneScore">0.00</strong>
+                    <span class="f-sub" id="fusionPhoneSub">No impact reports</span>
+                </div>
+                <div class="f-metric highlight-fusion">
+                    <span class="f-label">COMBINED CONFIDENCE</span>
+                    <strong class="f-val text-cyan" id="fusionCombinedScore">0%</strong>
+                    <span class="f-sub" id="fusionFormulaDesc">1 - (1 - S_vis) * (1 - S_phone)</span>
+                </div>
+                <div class="f-metric">
+                    <span class="f-label">INDEPENDENT SOURCES</span>
+                    <strong class="f-val" id="fusionSourcesCount">0 Sources</strong>
+                    <span class="f-sub">Unique Cameras + Unique Devices</span>
+                </div>
+            </div>
+            <div class="fusion-footer-desc" id="fusionDescription">
+                Run both the CCTV video analysis and the smartphone detection replay to achieve Dual-Confirmed Multi-Modal hazard verification.
+            </div>
         </div>
     </div>
 
@@ -201,15 +337,6 @@
                 <div class="stat-sub">Severe sudden road shocks</div>
             </div>
 
-            <div class="card stat-card alert-med">
-                <div class="stat-header">
-                    <span class="stat-title">MEDIUM-IMPACT EVENTS</span>
-                    <span class="stat-badge badge-med">6.5 - 11.5 m/s²</span>
-                </div>
-                <div class="stat-value text-warning" id="statMedEvents">0</div>
-                <div class="stat-sub">Moderate bumps / jolts</div>
-            </div>
-
             <div class="card stat-card alert-hazards">
                 <div class="stat-header">
                     <span class="stat-title">MAPPED ROAD HAZARDS</span>
@@ -217,6 +344,15 @@
                 </div>
                 <div class="stat-value text-accent" id="statTotalHazards">0</div>
                 <div class="stat-sub">Geographically clustered (20m radius)</div>
+            </div>
+
+            <div class="card stat-card alert-fusion">
+                <div class="stat-header">
+                    <span class="stat-title">DUAL-CONFIRMED HAZARDS</span>
+                    <span class="stat-badge badge-fusion">CCTV + Impact</span>
+                </div>
+                <div class="stat-value text-cyan" id="statDualConfirmed">0</div>
+                <div class="stat-sub">Cross-validated by Vision & Accelerometer</div>
             </div>
         </section>
 
@@ -229,7 +365,7 @@
                     <div class="card-header">
                         <h2 class="card-title">Live 3-Axis Smartphone Telemetry</h2>
                         <div class="header-right-badges">
-                            <span id="telemetrySourceTag" class="source-tag badge-simulated">SIMULATED REPLAY</span>
+                            <span id="telemetrySourceTag" class="source-tag badge-live">LIVE PHONE SENSOR</span>
                             <span id="samplingRateBadge" class="sensor-rate-badge">0.0 Hz</span>
                         </div>
                     </div>
@@ -355,10 +491,16 @@
                             <span class="map-area-tag">SRM Kattankulathur • Potheri • GST Road</span>
                         </div>
                         <div class="map-actions">
+                            <!-- Multi-Modal Source Filter Buttons -->
+                            <div class="map-source-filter-group">
+                                <button class="btn btn-xs map-source-btn active" data-source="ALL">All Sources</button>
+                                <button class="btn btn-xs map-source-btn" data-source="DUAL_CONFIRMED">🔥 Dual Confirmed</button>
+                                <button class="btn btn-xs map-source-btn" data-source="IMPACT_ONLY">📱 Phone</button>
+                                <button class="btn btn-xs map-source-btn" data-source="VISUAL_ONLY">📹 CCTV</button>
+                            </div>
                             <button id="mapFullscreenBtn" class="btn btn-xs btn-outline" title="Expand Map">⛶ Expand</button>
-                            <button id="mapCenterCampusBtn" class="btn btn-xs btn-outline">Center SRM</button>
-                            <button id="mapCenterUserBtn" class="btn btn-xs btn-outline">My Location</button>
-                            <button id="refreshMapBtn" class="btn btn-xs btn-outline">Refresh Hazards</button>
+                            <button id="mapCenterCampusBtn" class="btn btn-xs btn-outline">SRM</button>
+                            <button id="refreshMapBtn" class="btn btn-xs btn-outline">Refresh</button>
                         </div>
                     </div>
 
@@ -367,15 +509,15 @@
 
                     <!-- Map Legend Bar -->
                     <div class="map-legend">
-                        <span class="legend-title">Hazard Severity:</span>
+                        <span class="legend-title">Hazard Legend:</span>
                         <div class="legend-scale">
+                            <span class="legend-marker cyan-marker">★</span> Dual Confirmed (CCTV + Impact)
                             <span class="legend-marker red-marker">●</span> High Impact (&ge; 11.5 m/s²)
-                            <span class="legend-marker amber-marker">●</span> Medium Impact (6.5 - 11.5 m/s²)
-                            <span class="legend-marker green-marker">●</span> Minor (&lt; 6.5 m/s²)
+                            <span class="legend-marker amber-marker">●</span> Medium Impact
+                            <span class="legend-marker blue-marker">▲</span> CCTV Visual Defect Only
                         </div>
                         <div class="legend-notes">
                             <span class="legend-cluster-note">Blue circle: 20m cluster radius</span>
-                            <span class="legend-badge-note">🧪 = Simulated Test Data</span>
                         </div>
                     </div>
                 </div>
@@ -384,7 +526,7 @@
                 <div class="card history-card" id="historyCard">
                     <div class="card-header">
                         <div class="history-title-row">
-                            <h2 class="card-title">Road Impact Event History Panel</h2>
+                            <h2 class="card-title">Road Impact & CCTV Event History</h2>
                             <span id="historyCountBadge" class="table-count-badge">0 detections</span>
                         </div>
                         <div class="history-filter-group">
@@ -401,8 +543,7 @@
                                     <th>Time</th>
                                     <th>Severity</th>
                                     <th>Classification</th>
-                                    <th>Peak Accel</th>
-                                    <th>Confidence</th>
+                                    <th>Impact/Conf</th>
                                     <th>Source</th>
                                     <th>Coordinates</th>
                                     <th>Action</th>
@@ -410,7 +551,7 @@
                             </thead>
                             <tbody id="eventTableBody">
                                 <tr class="empty-row">
-                                    <td colspan="8">No road impact events detected yet. Click "Start Detection" or run a demo scenario.</td>
+                                    <td colspan="7">No road impact events detected yet. Click "Start Detection" or run a demo scenario.</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -420,10 +561,46 @@
         </div>
     </main>
 
-    <!-- Presentation Mode Floating Controls (Visible in Presentation Mode) -->
+    <!-- Presentation Mode Floating Controls -->
     <div id="presentationOverlayControls" class="presentation-controls hidden">
         <span class="pres-indicator">📽️ PRESENTATION MODE ACTIVE</span>
         <button id="exitPresentationBtn" class="btn btn-sm btn-danger">Exit Presentation (Esc)</button>
+    </div>
+
+    <!-- Configure Camera Modal -->
+    <div id="cameraConfigModal" class="modal-backdrop hidden">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>Configure CCTV Camera Location</h3>
+                <button id="closeCameraConfigModalBtn" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Associate CCTV camera feed with its physical GPS coordinates on the road corridor:</p>
+                <div class="input-form-group">
+                    <label>Camera Identifier:</label>
+                    <input type="text" id="cfgCameraId" class="strip-select full-width" value="CAM-GST-SERVICE">
+                </div>
+                <div class="input-form-group">
+                    <label>Camera Name:</label>
+                    <input type="text" id="cfgCameraName" class="strip-select full-width" value="GST Road Service Lane Cam 1">
+                </div>
+                <div class="input-form-group">
+                    <label>Latitude:</label>
+                    <input type="number" step="0.000001" id="cfgCameraLat" class="strip-select full-width" value="12.821500">
+                </div>
+                <div class="input-form-group">
+                    <label>Longitude:</label>
+                    <input type="number" step="0.000001" id="cfgCameraLon" class="strip-select full-width" value="80.041800">
+                </div>
+                <div class="input-form-group">
+                    <label>Road Segment:</label>
+                    <input type="text" id="cfgRoadSegment" class="strip-select full-width" value="NH45 Service Lane">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="saveCameraConfigBtn" class="btn btn-primary">Save Camera Location</button>
+            </div>
+        </div>
     </div>
 
     <!-- Calibration Modal -->
@@ -434,7 +611,7 @@
                 <button id="closeCalibrateModalBtn" class="modal-close">&times;</button>
             </div>
             <div class="modal-body">
-                <p>To avoid false positives from vehicle engine vibration or different device mountings, record a 5-second baseline while stationary or cruising smoothly.</p>
+                <p>Record a 5-second baseline while stationary or cruising smoothly to eliminate engine vibration:</p>
                 <div class="calibration-progress-wrap">
                     <div id="calibProgressBar" class="calib-progress-fill" style="width: 0%;"></div>
                 </div>
@@ -462,21 +639,13 @@
                 <button id="closeQrModalBtn" class="modal-close">&times;</button>
             </div>
             <div class="modal-body qr-modal-body">
-                <p>Connect your smartphone to the same Wi-Fi network and open the URL below, or scan the QR code:</p>
+                <p>Connect your smartphone to the same Wi-Fi network and scan or open:</p>
                 <div class="qr-code-wrapper">
                     <img id="qrCodeImage" src="" alt="Smartphone QR Code" width="160" height="160">
                 </div>
                 <div class="qr-url-box">
                     <span id="phoneAccessUrl" class="qr-url-text">http://localhost:5000</span>
                     <button id="copyPhoneUrlBtn" class="btn btn-xs btn-outline">Copy</button>
-                </div>
-                <div class="qr-tips">
-                    <p><strong>Tips for Mobile Browsers:</strong></p>
-                    <ul>
-                        <li><strong>iOS (Safari):</strong> Tap "Start Detection" to trigger the Motion & Orientation permission prompt.</li>
-                        <li><strong>Android (Chrome):</strong> Sensor permissions are typically granted automatically on localhost / LAN.</li>
-                        <li>Keep the phone firmly mounted or resting on vehicle dashboard/cupholder.</li>
-                    </ul>
                 </div>
             </div>
         </div>

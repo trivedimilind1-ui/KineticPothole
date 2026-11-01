@@ -20,8 +20,6 @@ htmlcov/
 *.db
 *.sqlite3
 
-# OS / Editor
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
+# CCTV & Video Artifacts
+backend/cctv_frames/*.jpg
+data/uploads/

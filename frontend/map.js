@@ -17,6 +17,7 @@ class HazardMapManager {
         this.DEFAULT_ZOOM = 15;
 
         this.hazardsCache = [];
+        this.currentSourceFilter = 'ALL';
         this.initMap();
     }
 
@@ -47,16 +48,27 @@ class HazardMapManager {
         this.fetchAndRenderHazards();
     }
 
-    createCustomMarkerIcon(severity, reportCount) {
+    createCustomMarkerIcon(severity, reportCount, fusionStatus = 'IMPACT_ONLY') {
         let colorClass = 'marker-green';
         let badgeColor = '#10b981';
+        let symbol = '⚠️';
 
-        if (severity === 'HIGH') {
-            colorClass = 'marker-red';
-            badgeColor = '#ef4444';
-        } else if (severity === 'MEDIUM') {
-            colorClass = 'marker-amber';
-            badgeColor = '#f59e0b';
+        if (fusionStatus === 'DUAL_CONFIRMED') {
+            colorClass = 'marker-dual-confirmed';
+            badgeColor = '#00d2ff';
+            symbol = '★';
+        } else if (fusionStatus === 'VISUAL_ONLY') {
+            colorClass = 'marker-cctv-visual';
+            badgeColor = '#3b82f6';
+            symbol = '📹';
+        } else {
+            if (severity === 'HIGH') {
+                colorClass = 'marker-red';
+                badgeColor = '#ef4444';
+            } else if (severity === 'MEDIUM') {
+                colorClass = 'marker-amber';
+                badgeColor = '#f59e0b';
+            }
         }
 
         const countBadge = reportCount > 1 ? `<span class="marker-count">${reportCount}</span>` : '';
@@ -64,7 +76,7 @@ class HazardMapManager {
         const html = `
             <div class="custom-pothole-marker ${colorClass}">
                 <div class="marker-pin" style="background: ${badgeColor};">
-                    <span class="marker-icon-symbol">⚠️</span>
+                    <span class="marker-icon-symbol">${symbol}</span>
                     ${countBadge}
                 </div>
                 <div class="marker-shadow"></div>
@@ -86,6 +98,11 @@ class HazardMapManager {
         return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     }
 
+    setSourceFilter(sourceType) {
+        this.currentSourceFilter = sourceType || 'ALL';
+        this.renderHazards(this.hazardsCache);
+    }
+
     renderHazards(hazards) {
         if (!this.map) return;
         this.hazardsCache = hazards || [];
@@ -93,7 +110,17 @@ class HazardMapManager {
         this.markersLayer.clearLayers();
         this.radiusLayer.clearLayers();
 
-        hazards.forEach(hazard => {
+        // Apply source filtering
+        let displayList = this.hazardsCache;
+        if (this.currentSourceFilter === 'DUAL_CONFIRMED') {
+            displayList = displayList.filter(h => h.fusion_status === 'DUAL_CONFIRMED');
+        } else if (this.currentSourceFilter === 'IMPACT_ONLY') {
+            displayList = displayList.filter(h => h.fusion_status === 'IMPACT_ONLY' || (!h.fusion_status && (h.cctv_detections_count || 0) === 0));
+        } else if (this.currentSourceFilter === 'VISUAL_ONLY') {
+            displayList = displayList.filter(h => h.fusion_status === 'VISUAL_ONLY' || ((h.cctv_detections_count || 0) > 0 && (!h.report_count || h.report_count === 0)));
+        }
+
+        displayList.forEach(hazard => {
             const lat = parseFloat(hazard.latitude);
             const lon = parseFloat(hazard.longitude);
             if (isNaN(lat) || isNaN(lon)) return;
@@ -106,25 +133,52 @@ class HazardMapManager {
             const confidencePct = Math.round((parseFloat(hazard.confidence_score) || 0.6) * 100);
             const lastReportedStr = this.formatTimestamp(hazard.last_reported);
             const hazardType = hazard.hazard_type || 'Suspected Road Hazard';
+            const fusionStatus = hazard.fusion_status || (hazard.cctv_detections_count > 0 && hazard.report_count > 0 ? 'DUAL_CONFIRMED' : 'IMPACT_ONLY');
 
             // 1. Draw 20-meter grouping cluster radius
             let radiusColor = '#10b981';
-            if (severity === 'HIGH') radiusColor = '#ef4444';
+            if (fusionStatus === 'DUAL_CONFIRMED') radiusColor = '#00d2ff';
+            else if (fusionStatus === 'VISUAL_ONLY') radiusColor = '#3b82f6';
+            else if (severity === 'HIGH') radiusColor = '#ef4444';
             else if (severity === 'MEDIUM') radiusColor = '#f59e0b';
 
             const circle = L.circle([lat, lon], {
                 radius: hazard.radius_meters || 20,
                 color: radiusColor,
-                weight: 1.5,
+                weight: fusionStatus === 'DUAL_CONFIRMED' ? 2.5 : 1.5,
                 fillColor: radiusColor,
-                fillOpacity: 0.12,
-                dashArray: '3, 4'
+                fillOpacity: fusionStatus === 'DUAL_CONFIRMED' ? 0.22 : 0.12,
+                dashArray: fusionStatus === 'DUAL_CONFIRMED' ? '4, 4' : '3, 4'
             });
             this.radiusLayer.addLayer(circle);
 
             // 2. Marker Pin
-            const icon = this.createCustomMarkerIcon(severity, reportCount);
+            const icon = this.createCustomMarkerIcon(severity, reportCount, fusionStatus);
             const marker = L.marker([lat, lon], { icon: icon });
+
+            // CCTV Image Thumbnail in Popup
+            const cctvThumbHtml = hazard.last_cctv_image ? `
+                <div class="p-row">
+                    <span>CCTV Defect Snapshot:</span>
+                </div>
+                <img src="/api/cctv/frames/${hazard.last_cctv_image}" class="popup-cctv-thumb" alt="CCTV Defect Snapshot">
+            ` : '';
+
+            // Fusion Details in Popup
+            const fusionBadgeHtml = fusionStatus === 'DUAL_CONFIRMED' ? `
+                <div class="p-row" style="background: rgba(0,210,255,0.12); padding: 4px 6px; border-radius: 4px; margin-bottom: 6px;">
+                    <span style="color:#00d2ff; font-weight:800;">⚡ MULTI-MODAL FUSION:</span>
+                    <strong style="color:#00d2ff;">DUAL CONFIRMED</strong>
+                </div>
+                <div class="p-row">
+                    <span>Visual Evidence (CCTV):</span>
+                    <span>${Math.round((hazard.visual_evidence_score || 0.8) * 100)}%</span>
+                </div>
+                <div class="p-row">
+                    <span>Physical Impact (Phone):</span>
+                    <span>${Math.round((hazard.smartphone_evidence_score || 0.75) * 100)}%</span>
+                </div>
+            ` : '';
 
             // Popup content
             const popupHtml = `
@@ -134,6 +188,8 @@ class HazardMapManager {
                         <span class="popup-severity badge-${severity.toLowerCase()}">${severity}</span>
                     </div>
                     <div class="popup-body">
+                        ${fusionBadgeHtml}
+                        ${cctvThumbHtml}
                         <div class="p-row">
                             <span>Max Dynamic Impact:</span>
                             <strong>${maxPeak} m/s²</strong>

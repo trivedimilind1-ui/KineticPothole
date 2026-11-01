@@ -53,7 +53,14 @@
         calibrationTimer: null,
 
         // Last detected event for toast
-        lastDetectedEvent: null
+        lastDetectedEvent: null,
+
+        // CCTV AI Monitoring & Fusion State
+        cctvCameras: [],
+        cctvDetections: [],
+        currentCameraId: 'CAM-GST-SERVICE',
+        currentVideoFile: 'sample_cctv_pothole.mp4',
+        isCctvProcessing: false
     };
 
     localStorage.setItem('kp_device_id', state.deviceId);
@@ -65,6 +72,7 @@
         systemStatusText: document.getElementById('systemStatusText'),
         modeLiveBtn: document.getElementById('modeLiveBtn'),
         modeDemoBtn: document.getElementById('modeDemoBtn'),
+        modeCctvBtn: document.getElementById('modeCctvBtn'),
         presentationModeBtn: document.getElementById('presentationModeBtn'),
         startDetectionBtn: document.getElementById('startDetectionBtn'),
         stopDetectionBtn: document.getElementById('stopDetectionBtn'),
@@ -177,7 +185,48 @@
         closeQrModalBtn: document.getElementById('closeQrModalBtn'),
         qrCodeImage: document.getElementById('qrCodeImage'),
         phoneAccessUrl: document.getElementById('phoneAccessUrl'),
-        copyPhoneUrlBtn: document.getElementById('copyPhoneUrlBtn')
+        copyPhoneUrlBtn: document.getElementById('copyPhoneUrlBtn'),
+
+        // CCTV & Fusion Panel Elements
+        cctvMonitoringPanel: document.getElementById('cctvMonitoringPanel'),
+        cctvCameraSelect: document.getElementById('cctvCameraSelect'),
+        openConfigCameraBtn: document.getElementById('openConfigCameraBtn'),
+        cctvVideoSelect: document.getElementById('cctvVideoSelect'),
+        customVideoUploadInput: document.getElementById('customVideoUploadInput'),
+        cctvIntervalSelect: document.getElementById('cctvIntervalSelect'),
+        runCctvDetectionBtn: document.getElementById('runCctvDetectionBtn'),
+        runFusionBtn: document.getElementById('runFusionBtn'),
+        cctvCameraIdBadge: document.getElementById('cctvCameraIdBadge'),
+        cctvVideoPlayer: document.getElementById('cctvVideoPlayer'),
+        cctvAnnotatedFrame: document.getElementById('cctvAnnotatedFrame'),
+        cctvPlaceholder: document.getElementById('cctvPlaceholder'),
+        cctvDetectionBanner: document.getElementById('cctvDetectionBanner'),
+        cctvLabelText: document.getElementById('cctvLabelText'),
+        cctvConfText: document.getElementById('cctvConfText'),
+        visualDefectCountBadge: document.getElementById('visualDefectCountBadge'),
+        frameCarousel: document.getElementById('frameCarousel'),
+        fusionStatusPill: document.getElementById('fusionStatusPill'),
+        fusionVisualScore: document.getElementById('fusionVisualScore'),
+        fusionVisualSub: document.getElementById('fusionVisualSub'),
+        fusionPhoneScore: document.getElementById('fusionPhoneScore'),
+        fusionPhoneSub: document.getElementById('fusionPhoneSub'),
+        fusionCombinedScore: document.getElementById('fusionCombinedScore'),
+        fusionSourcesCount: document.getElementById('fusionSourcesCount'),
+        fusionDescription: document.getElementById('fusionDescription'),
+        statDualConfirmed: document.getElementById('statDualConfirmed'),
+
+        // Camera Config Modal
+        cameraConfigModal: document.getElementById('cameraConfigModal'),
+        closeCameraConfigModalBtn: document.getElementById('closeCameraConfigModalBtn'),
+        cfgCameraId: document.getElementById('cfgCameraId'),
+        cfgCameraName: document.getElementById('cfgCameraName'),
+        cfgCameraLat: document.getElementById('cfgCameraLat'),
+        cfgCameraLon: document.getElementById('cfgCameraLon'),
+        cfgRoadSegment: document.getElementById('cfgRoadSegment'),
+        saveCameraConfigBtn: document.getElementById('saveCameraConfigBtn'),
+
+        // Map Source Filter Buttons
+        mapSourceButtons: document.querySelectorAll('.map-source-btn')
     };
 
     // ==========================================
@@ -743,6 +792,7 @@
                 if (elements.statHighEvents) elements.statHighEvents.innerText = stats.high_severity_events || 0;
                 if (elements.statMedEvents) elements.statMedEvents.innerText = stats.medium_severity_events || 0;
                 if (elements.statTotalHazards) elements.statTotalHazards.innerText = stats.total_hazards || 0;
+                if (elements.statDualConfirmed) elements.statDualConfirmed.innerText = stats.dual_confirmed_count || 0;
             }
 
             // 2. Events History
@@ -982,6 +1032,330 @@
     }
 
     // ==========================================
+    // CCTV AI ROAD MONITORING & SENSOR FUSION
+    // ==========================================
+
+    async function loadCctvCameras() {
+        try {
+            const res = await fetch('/api/cctv/cameras');
+            if (res.ok) {
+                const data = await res.json();
+                state.cctvCameras = data.cameras || [];
+                if (elements.cctvCameraSelect && state.cctvCameras.length > 0) {
+                    elements.cctvCameraSelect.innerHTML = '';
+                    state.cctvCameras.forEach(cam => {
+                        const opt = document.createElement('option');
+                        opt.value = cam.camera_id;
+                        opt.innerText = `${cam.camera_id} — ${cam.name} (${cam.latitude.toFixed(6)}, ${cam.longitude.toFixed(6)})`;
+                        elements.cctvCameraSelect.appendChild(opt);
+                    });
+                    if (state.currentCameraId) {
+                        elements.cctvCameraSelect.value = state.currentCameraId;
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn('Could not load CCTV cameras:', err);
+        }
+    }
+
+    function openCameraConfigModal() {
+        const camId = elements.cctvCameraSelect ? elements.cctvCameraSelect.value : state.currentCameraId;
+        const currentCam = state.cctvCameras.find(c => c.camera_id === camId) || {
+            camera_id: camId,
+            name: 'Corridor Camera',
+            latitude: 12.821500,
+            longitude: 80.041800,
+            road_segment: 'GST Road Corridor'
+        };
+
+        if (elements.cfgCameraId) elements.cfgCameraId.value = currentCam.camera_id;
+        if (elements.cfgCameraName) elements.cfgCameraName.value = currentCam.name;
+        if (elements.cfgCameraLat) elements.cfgCameraLat.value = currentCam.latitude;
+        if (elements.cfgCameraLon) elements.cfgCameraLon.value = currentCam.longitude;
+        if (elements.cfgRoadSegment) elements.cfgRoadSegment.value = currentCam.road_segment || '';
+
+        if (elements.cameraConfigModal) elements.cameraConfigModal.classList.remove('hidden');
+    }
+
+    function closeCameraConfigModal() {
+        if (elements.cameraConfigModal) elements.cameraConfigModal.classList.add('hidden');
+    }
+
+    async function saveCameraConfig() {
+        const camData = {
+            camera_id: elements.cfgCameraId ? elements.cfgCameraId.value.trim() : '',
+            name: elements.cfgCameraName ? elements.cfgCameraName.value.trim() : '',
+            latitude: parseFloat(elements.cfgCameraLat ? elements.cfgCameraLat.value : 0),
+            longitude: parseFloat(elements.cfgCameraLon ? elements.cfgCameraLon.value : 0),
+            road_segment: elements.cfgRoadSegment ? elements.cfgRoadSegment.value.trim() : ''
+        };
+
+        if (!camData.camera_id || isNaN(camData.latitude) || isNaN(camData.longitude)) {
+            showNotice('Please provide valid Camera ID and numerical GPS coordinates.', '⚠️', 4000);
+            return;
+        }
+
+        try {
+            const res = await fetch('/api/cctv/cameras', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(camData)
+            });
+
+            if (res.ok) {
+                showNotice(`Camera ${camData.camera_id} GPS location saved.`, '✅', 3000);
+                closeCameraConfigModal();
+                await loadCctvCameras();
+            } else {
+                showNotice('Failed to save camera GPS config.', '⚠️', 4000);
+            }
+        } catch (err) {
+            showNotice('Error saving camera config: ' + err.message, '⚠️', 4000);
+        }
+    }
+
+    async function handleVideoUpload(event) {
+        const file = event.target.files && event.target.files[0];
+        if (!file) return;
+
+        showNotice(`Uploading video ${file.name}...`, '⏳', 10000);
+        const formData = new FormData();
+        formData.append('video', file);
+
+        try {
+            const res = await fetch('/api/cctv/upload_video', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                const filename = data.filename;
+                showNotice(`Video ${file.name} uploaded successfully!`, '✅', 4000);
+
+                if (elements.cctvVideoSelect) {
+                    const opt = document.createElement('option');
+                    opt.value = filename;
+                    opt.innerText = `Uploaded: ${file.name}`;
+                    elements.cctvVideoSelect.appendChild(opt);
+                    elements.cctvVideoSelect.value = filename;
+                }
+
+                if (elements.cctvVideoPlayer) {
+                    elements.cctvVideoPlayer.src = `/data/${filename}`;
+                    elements.cctvVideoPlayer.load();
+                }
+            } else {
+                const errData = await res.json().catch(() => ({}));
+                showNotice('Video upload failed: ' + (errData.error || res.statusText), '⚠️', 5000);
+            }
+        } catch (err) {
+            showNotice('Video upload error: ' + err.message, '⚠️', 5000);
+        }
+    }
+
+    async function runCctvDetection() {
+        if (state.isCctvProcessing) return;
+        state.isCctvProcessing = true;
+
+        if (elements.runCctvDetectionBtn) {
+            elements.runCctvDetectionBtn.disabled = true;
+            elements.runCctvDetectionBtn.innerHTML = '<span class="btn-icon">⏳</span> Analyzing Frames...';
+        }
+
+        const videoFile = elements.cctvVideoSelect ? elements.cctvVideoSelect.value : 'sample_cctv_pothole.mp4';
+        const cameraId = elements.cctvCameraSelect ? elements.cctvCameraSelect.value : 'CAM-GST-SERVICE';
+        const intervalSec = elements.cctvIntervalSelect ? parseFloat(elements.cctvIntervalSelect.value) : 1.0;
+
+        showNotice(`Extracting frames from ${videoFile} at ${intervalSec}s intervals. Running road surface damage model...`, '📹', 10000);
+
+        try {
+            const res = await fetch('/api/cctv/process_video', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    video_filename: videoFile,
+                    camera_id: cameraId,
+                    interval_seconds: intervalSec
+                })
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                const detections = data.detections || [];
+                state.cctvDetections = detections;
+
+                const defectFrames = detections.filter(d => d.defect_detected);
+                if (elements.visualDefectCountBadge) {
+                    elements.visualDefectCountBadge.innerText = `${defectFrames.length} Defect Frame${defectFrames.length !== 1 ? 's' : ''}`;
+                }
+
+                // Render Carousel of frames
+                if (elements.frameCarousel) {
+                    elements.frameCarousel.innerHTML = '';
+                    if (detections.length === 0) {
+                        elements.frameCarousel.innerHTML = '<span class="text-muted">No frames extracted.</span>';
+                    } else {
+                        detections.forEach((det, idx) => {
+                            const thumbDiv = document.createElement('div');
+                            thumbDiv.className = 'frame-thumb' + (idx === 0 ? ' active' : '');
+                            thumbDiv.innerHTML = `
+                                <img src="/api/cctv/frames/${det.frame_filename}" alt="Frame ${det.frame_number}">
+                                <span class="thumb-conf">${Math.round(det.confidence * 100)}%</span>
+                            `;
+                            thumbDiv.addEventListener('click', () => {
+                                document.querySelectorAll('.frame-thumb').forEach(t => t.classList.remove('active'));
+                                thumbDiv.classList.add('active');
+                                previewCctvFrame(det);
+                            });
+                            elements.frameCarousel.appendChild(thumbDiv);
+                        });
+                    }
+                }
+
+                // Preview the first defect frame (or first frame)
+                const firstDisplay = defectFrames.length > 0 ? defectFrames[0] : detections[0];
+                if (firstDisplay) {
+                    previewCctvFrame(firstDisplay);
+                }
+
+                showNotice(`AI Vision Analysis Complete: ${detections.length} frames evaluated, ${defectFrames.length} road defects identified. Click "Run Sensor Fusion" to correlate with phone accelerometer.`, '✅', 6000);
+
+                // Auto refresh hazard map
+                if (window.hazardMap) {
+                    window.hazardMap.fetchAndRenderHazards();
+                }
+            } else {
+                const errData = await res.json().catch(() => ({}));
+                showNotice('CCTV processing failed: ' + (errData.error || res.statusText), '⚠️', 5000);
+            }
+        } catch (err) {
+            showNotice('CCTV processing error: ' + err.message, '⚠️', 5000);
+        } finally {
+            state.isCctvProcessing = false;
+            if (elements.runCctvDetectionBtn) {
+                elements.runCctvDetectionBtn.disabled = false;
+                elements.runCctvDetectionBtn.innerHTML = '<span class="btn-icon">▶</span> Run AI Detection';
+            }
+        }
+    }
+
+    function previewCctvFrame(detection) {
+        if (!detection) return;
+        if (elements.cctvPlaceholder) elements.cctvPlaceholder.classList.add('hidden');
+        if (elements.cctvAnnotatedFrame) {
+            elements.cctvAnnotatedFrame.src = `/api/cctv/frames/${detection.frame_filename}`;
+            elements.cctvAnnotatedFrame.classList.remove('hidden');
+        }
+
+        if (elements.cctvDetectionBanner) {
+            elements.cctvDetectionBanner.classList.remove('hidden');
+            if (elements.cctvLabelText) {
+                elements.cctvLabelText.innerText = detection.defect_detected ? (detection.defect_type || 'POTHOLE_CAVITY').toUpperCase() : 'NO DEFECT DETECTED';
+                elements.cctvLabelText.style.color = detection.defect_detected ? '#ef4444' : '#10b981';
+            }
+            if (elements.cctvConfText) {
+                elements.cctvConfText.innerText = `Confidence: ${Math.round(detection.confidence * 100)}%`;
+            }
+        }
+    }
+
+    async function runSensorFusion() {
+        if (elements.runFusionBtn) {
+            elements.runFusionBtn.disabled = true;
+            elements.runFusionBtn.innerHTML = '<span class="btn-icon">⏳</span> Fusing Data...';
+        }
+
+        showNotice('Running Sensor Fusion: Correlating CCTV bounding boxes with smartphone accelerometer impacts within 35m spatial radius...', '⚡', 5000);
+
+        try {
+            const res = await fetch('/api/fusion/run', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    max_spatial_distance_meters: 35.0,
+                    max_time_window_hours: 48.0
+                })
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                const matched = data.matched_clusters || [];
+                const dualCount = data.dual_confirmed_count || 0;
+
+                if (elements.statDualConfirmed) {
+                    elements.statDualConfirmed.innerText = dualCount;
+                }
+
+                if (matched.length > 0) {
+                    const topMatch = matched[0];
+                    if (elements.fusionVisualScore) elements.fusionVisualScore.innerText = (topMatch.visual_evidence_score || 0).toFixed(2);
+                    if (elements.fusionVisualSub) elements.fusionVisualSub.innerText = `${topMatch.cctv_detections_count || 1} CCTV detection frame(s)`;
+
+                    if (elements.fusionPhoneScore) elements.fusionPhoneScore.innerText = (topMatch.smartphone_evidence_score || 0).toFixed(2);
+                    if (elements.fusionPhoneSub) elements.fusionPhoneSub.innerText = `${topMatch.report_count || 1} impact report(s) from phone`;
+
+                    if (elements.fusionCombinedScore) elements.fusionCombinedScore.innerText = `${Math.round((topMatch.fused_confidence || 0.94) * 100)}%`;
+                    if (elements.fusionSourcesCount) elements.fusionSourcesCount.innerText = `${topMatch.unique_sources_count || 2} Independent Sources`;
+
+                    if (elements.fusionStatusPill) {
+                        elements.fusionStatusPill.className = 'fusion-status-pill pill-dual-confirmed';
+                        elements.fusionStatusPill.innerText = '⚡ DUAL-CONFIRMED MULTI-MODAL';
+                    }
+
+                    if (elements.fusionDescription) {
+                        elements.fusionDescription.innerHTML = `<strong>Cross-Validation Success:</strong> Hazard at [${topMatch.latitude.toFixed(5)}, ${topMatch.longitude.toFixed(5)}] confirmed by both physical accelerometer shockwave AND CCTV asphalt distress analysis. Verified confidence boosted to ${Math.round((topMatch.fused_confidence || 0.94) * 100)}%.`;
+                    }
+
+                    // Toast alert for dual confirmation
+                    showToastAlert({
+                        severity: 'HIGH',
+                        is_synthetic: false,
+                        max_peak: 14.2,
+                        rms: 4.8,
+                        lat: topMatch.latitude,
+                        lon: topMatch.longitude
+                    });
+                    if (elements.toastSeverity) {
+                        elements.toastSeverity.innerText = '⚡ DUAL-CONFIRMED ROAD HAZARD';
+                        elements.toastSeverity.className = 'toast-severity-badge badge-high';
+                    }
+                    if (elements.toastSourceTag) {
+                        elements.toastSourceTag.innerText = 'MULTI-MODAL: CCTV + PHONE';
+                        elements.toastSourceTag.className = 'toast-source-tag badge-live';
+                    }
+                } else {
+                    if (elements.fusionStatusPill) {
+                        elements.fusionStatusPill.className = 'fusion-status-pill pill-partial';
+                        elements.fusionStatusPill.innerText = 'PARTIAL / UNCORRELATED';
+                    }
+                    if (elements.fusionDescription) {
+                        elements.fusionDescription.innerText = 'Fusion algorithm evaluated all records. No overlapping visual and physical detections found within 35m spatial radius.';
+                    }
+                }
+
+                showNotice(`Sensor Fusion Completed: ${dualCount} dual-confirmed multi-modal hazard cluster(s) mapped.`, '✅', 5000);
+
+                if (window.hazardMap) {
+                    window.hazardMap.fetchAndRenderHazards();
+                }
+                refreshDashboardData();
+            } else {
+                const errData = await res.json().catch(() => ({}));
+                showNotice('Fusion run failed: ' + (errData.error || res.statusText), '⚠️', 4000);
+            }
+        } catch (err) {
+            showNotice('Fusion error: ' + err.message, '⚠️', 4000);
+        } finally {
+            if (elements.runFusionBtn) {
+                elements.runFusionBtn.disabled = false;
+                elements.runFusionBtn.innerHTML = '<span class="btn-icon">⚡</span> Run Sensor Fusion';
+            }
+        }
+    }
+
+    // ==========================================
     // MODE SWITCHING LOGIC
     // ==========================================
 
@@ -990,8 +1364,10 @@
 
         elements.modeLiveBtn.classList.toggle('active', mode === 'live');
         elements.modeDemoBtn.classList.toggle('active', mode === 'demo');
+        if (elements.modeCctvBtn) elements.modeCctvBtn.classList.toggle('active', mode === 'cctv');
 
         elements.demoControlStrip.classList.toggle('hidden', mode !== 'demo');
+        if (elements.cctvMonitoringPanel) elements.cctvMonitoringPanel.classList.toggle('hidden', mode !== 'cctv');
 
         if (mode === 'demo') {
             stopLiveDetection();
@@ -1000,6 +1376,11 @@
                 selectDemoScenario('pothole');
             }
             showNotice('Judge Demo Mode: Choose a test scenario to replay through the Python detector.', '🎬', 4000);
+        } else if (mode === 'cctv') {
+            stopLiveDetection();
+            stopDemoReplay();
+            loadCctvCameras();
+            showNotice('CCTV AI Road Damage Monitoring: Extract and analyze video frames with road-surface ROI privacy.', '📹', 4000);
         } else {
             stopDemoReplay();
             if (elements.telemetrySourceTag) {
@@ -1019,6 +1400,7 @@
         // Mode Switches
         elements.modeLiveBtn.addEventListener('click', () => setAppMode('live'));
         elements.modeDemoBtn.addEventListener('click', () => setAppMode('demo'));
+        if (elements.modeCctvBtn) elements.modeCctvBtn.addEventListener('click', () => setAppMode('cctv'));
 
         // Presentation Mode
         elements.presentationModeBtn.addEventListener('click', togglePresentationMode);
@@ -1077,6 +1459,46 @@
             elements.impactAlertToast.classList.add('hidden');
         });
 
+        // CCTV Module Controls
+        if (elements.cctvCameraSelect) {
+            elements.cctvCameraSelect.addEventListener('change', () => {
+                state.currentCameraId = elements.cctvCameraSelect.value;
+                if (elements.cctvCameraIdBadge) elements.cctvCameraIdBadge.innerText = state.currentCameraId;
+            });
+        }
+        if (elements.openConfigCameraBtn) elements.openConfigCameraBtn.addEventListener('click', openCameraConfigModal);
+        if (elements.closeCameraConfigModalBtn) elements.closeCameraConfigModalBtn.addEventListener('click', closeCameraConfigModal);
+        if (elements.saveCameraConfigBtn) elements.saveCameraConfigBtn.addEventListener('click', saveCameraConfig);
+
+        if (elements.customVideoUploadInput) {
+            elements.customVideoUploadInput.addEventListener('change', handleVideoUpload);
+        }
+
+        if (elements.cctvVideoSelect) {
+            elements.cctvVideoSelect.addEventListener('change', () => {
+                const selectedVideo = elements.cctvVideoSelect.value;
+                if (elements.cctvVideoPlayer) {
+                    elements.cctvVideoPlayer.src = `/data/${selectedVideo}`;
+                    elements.cctvVideoPlayer.load();
+                }
+            });
+        }
+
+        if (elements.runCctvDetectionBtn) elements.runCctvDetectionBtn.addEventListener('click', runCctvDetection);
+        if (elements.runFusionBtn) elements.runFusionBtn.addEventListener('click', runSensorFusion);
+
+        // Map Source Filters
+        elements.mapSourceButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                elements.mapSourceButtons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const src = btn.getAttribute('data-source');
+                if (window.hazardMap) {
+                    window.hazardMap.setSourceFilter(src);
+                }
+            });
+        });
+
         // Map Actions
         if (elements.mapFullscreenBtn) elements.mapFullscreenBtn.addEventListener('click', toggleMapFullscreen);
         if (elements.mapCenterCampusBtn) elements.mapCenterCampusBtn.addEventListener('click', () => window.hazardMap && window.hazardMap.centerOnCampus());
@@ -1118,6 +1540,7 @@
         initEventListeners();
         checkSystemHealth();
         refreshDashboardData();
+        loadCctvCameras();
     });
 
 })();

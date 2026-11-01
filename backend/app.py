@@ -19,16 +19,22 @@ from flask_cors import CORS
 
 from backend.detector import RoadImpactDetector
 from backend.database import Database
+from backend.cctv_detector import CCTVDetector
+from backend.sensor_fusion import SensorFusionEngine
 
 FRONTEND_DIR = os.path.join(PROJECT_DIR, "frontend")
 DB_PATH = os.path.join(BASE_DIR, "kinetic_pothole.db")
+CCTV_FRAMES_DIR = os.path.join(BASE_DIR, "cctv_frames")
+os.makedirs(CCTV_FRAMES_DIR, exist_ok=True)
 
 app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
 CORS(app)
 
-# Initialize single detector instance and database
+# Initialize single detector, database, cctv detector, and fusion engine
 detector = RoadImpactDetector()
 db = Database(db_path=DB_PATH)
+cctv_detector = CCTVDetector(frames_output_dir=CCTV_FRAMES_DIR)
+fusion_engine = SensorFusionEngine(match_radius_meters=35.0)
 
 
 def get_local_ip() -> str:
@@ -343,15 +349,222 @@ def process_batch():
 
 
 @app.route("/api/reset", methods=["POST"])
-def reset_demo():
-    """Reset database and detector states for fresh demonstration."""
+def reset_database():
+    """Clear all recorded events, clustered hazards, calibrations, and CCTV detections."""
     try:
-        detector.reset_state()
         db.reset_all()
+        detector.reset_state()
         return jsonify({
             "status": "success",
-            "message": "All hazard and event data has been reset."
+            "message": "All database records and detector state reset successfully"
         }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/cctv/frames/<path:filename>")
+def get_cctv_frame(filename):
+    """Serve annotated CCTV frame images."""
+    return send_from_directory(CCTV_FRAMES_DIR, filename)
+
+
+@app.route("/api/cctv/cameras", methods=["GET"])
+def get_cctv_cameras():
+    """List registered CCTV cameras with manually configured GPS coordinates."""
+    try:
+        cameras = db.get_cameras()
+        return jsonify({
+            "status": "success",
+            "count": len(cameras),
+            "cameras": cameras
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/cctv/cameras", methods=["POST"])
+def configure_cctv_camera():
+    """Register or update a CCTV camera with its associated GPS coordinates."""
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        cam_id = data.get("camera_id")
+        if not cam_id:
+            return jsonify({"error": "camera_id is required"}), 400
+
+        name = data.get("name", cam_id)
+        lat = float(data.get("latitude", 12.823050))
+        lon = float(data.get("longitude", 80.044200))
+        road_segment = data.get("road_segment", "")
+
+        saved = db.add_camera(cam_id, name, lat, lon, road_segment)
+        return jsonify({
+            "status": "success",
+            "camera": saved
+        }), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/cctv/detections", methods=["GET"])
+def get_cctv_detections():
+    """Retrieve visual detection records."""
+    try:
+        limit = min(200, int(request.args.get("limit", 50)))
+        dets = db.get_cctv_detections(limit=limit)
+        return jsonify({
+            "status": "success",
+            "count": len(dets),
+            "detections": dets
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/cctv/process_video", methods=["POST"])
+def process_cctv_video():
+    """
+    Process prerecorded or uploaded CCTV video:
+    1. Extract frames at interval.
+    2. Run road damage model / CV analyzer on road ROI.
+    3. Save annotated frames with bounding boxes.
+    4. Store detections in SQLite.
+    5. Trigger sensor fusion with smartphone hazard clusters.
+    """
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        video_filename = data.get("video_file") or data.get("video_filename") or "sample_cctv_pothole.mp4"
+        camera_id = data.get("camera_id", "CAM-SRM-MAIN")
+        interval_sec = float(data.get("interval_seconds", 0.5))
+        min_conf = float(data.get("min_confidence", 0.55))
+
+        # Lookup camera coordinates
+        cameras = {c["camera_id"]: c for c in db.get_cameras()}
+        cam_info = cameras.get(camera_id, {
+            "latitude": 12.821500,
+            "longitude": 80.041800,
+            "road_segment": "Service Lane"
+        })
+
+        # Locate video file
+        video_path = os.path.join(PROJECT_DIR, "data", video_filename)
+        if not os.path.exists(video_path):
+            video_path = os.path.join(PROJECT_DIR, "data", "uploads", video_filename)
+
+        if not os.path.exists(video_path):
+            return jsonify({"error": f"Video file not found: {video_filename}"}), 404
+
+        # Run CCTV detector
+        result = cctv_detector.process_video_stream(
+            video_path=video_path,
+            camera_id=camera_id,
+            camera_lat=float(cam_info["latitude"]),
+            camera_lon=float(cam_info["longitude"]),
+            interval_seconds=interval_sec,
+            min_confidence=min_conf
+        )
+
+        # Record each detection into database
+        for d in result["detections"]:
+            db.record_cctv_detection(d)
+
+        # Run Sensor Fusion across all hazards
+        all_hazards = db.get_hazards()
+        all_events = db.get_events(limit=500)
+        all_cctv = db.get_cctv_detections(limit=500)
+
+        fused_hazards = fusion_engine.correlate_detections_with_hazards(
+            cctv_detections=all_cctv,
+            hazards=all_hazards,
+            raw_events=all_events
+        )
+
+        # Update hazards in SQLite
+        for fh in fused_hazards:
+            db.update_hazard_fusion(
+                hazard_id=fh["id"],
+                visual_score=fh["visual_evidence_score"],
+                phone_score=fh["smartphone_evidence_score"],
+                combined_conf=fh["combined_confidence"],
+                fusion_status=fh["fusion_status"],
+                last_image=fh.get("last_cctv_image"),
+                cctv_count=fh.get("cctv_detections_count", 0)
+            )
+
+        return jsonify({
+            "status": "success",
+            "camera_id": camera_id,
+            "video_file": video_filename,
+            "total_frames_analyzed": result["total_frames_analyzed"],
+            "total_detections_count": result["total_detections_count"],
+            "saved_frames": result["saved_frames"],
+            "detections": result["detections"][:30],  # preview slice
+            "fused_hazards_count": len(fused_hazards),
+            "model_info": result["model_info"]
+        }), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/cctv/upload_video", methods=["POST"])
+def upload_cctv_video():
+    """Upload custom road video file."""
+    try:
+        if "video" not in request.files:
+            return jsonify({"error": "No video file attached"}), 400
+
+        file = request.files["video"]
+        if file.filename == "":
+            return jsonify({"error": "Empty filename"}), 400
+
+        upload_dir = os.path.join(PROJECT_DIR, "data", "uploads")
+        os.makedirs(upload_dir, exist_ok=True)
+        filename = f"upload_{int(time.time())}_{file.filename}"
+        filepath = os.path.join(upload_dir, filename)
+        file.save(filepath)
+
+        return jsonify({
+            "status": "success",
+            "message": "Video uploaded successfully",
+            "video_file": filename,
+            "path": filepath
+        }), 201
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/fusion/run", methods=["POST"])
+def run_sensor_fusion():
+    """Run sensor fusion across all hazards, events, and CCTV detections."""
+    try:
+        all_hazards = db.get_hazards()
+        all_events = db.get_events(limit=500)
+        all_cctv = db.get_cctv_detections(limit=500)
+
+        fused = fusion_engine.correlate_detections_with_hazards(
+            cctv_detections=all_cctv,
+            hazards=all_hazards,
+            raw_events=all_events
+        )
+
+        for fh in fused:
+            db.update_hazard_fusion(
+                hazard_id=fh["id"],
+                visual_score=fh["visual_evidence_score"],
+                phone_score=fh["smartphone_evidence_score"],
+                combined_conf=fh["combined_confidence"],
+                fusion_status=fh["fusion_status"],
+                last_image=fh.get("last_cctv_image"),
+                cctv_count=fh.get("cctv_detections_count", 0)
+            )
+
+        return jsonify({
+            "status": "success",
+            "fused_hazards_count": len(fused),
+            "hazards": fused
+        }), 200
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
