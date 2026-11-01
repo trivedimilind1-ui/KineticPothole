@@ -6,6 +6,9 @@
 [![Leaflet](https://img.shields.io/badge/mapping-Leaflet%201.9-orange.svg)](https://leafletjs.com/)
 [![Tests](https://img.shields.io/badge/tests-28%20passing-brightgreen.svg)]()
 [![Multi--Modal](https://img.shields.io/badge/fusion-CCTV%20%2B%20Accelerometer-cyan.svg)]()
+[![Vercel](https://img.shields.io/badge/deployed-Vercel%20Live-black?logo=vercel)](https://kinetic-pothole.vercel.app)
+
+🌐 **Live Public App:** **[https://kinetic-pothole.vercel.app](https://kinetic-pothole.vercel.app)**
 
 **KineticPothole** is a hackathon-ready, multi-modal road hazard detection and mapping platform. It combines:
 1. **Smartphone Accelerometer & GPS Sensing:** Crowdsourced road impact detection from vehicular motion dynamics.
