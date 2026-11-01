@@ -34,7 +34,7 @@ class RoadImpactDetector:
         threshold_high: float = 11.5,
         window_size: int = 15,          # Window size in samples (~0.3s at 50Hz)
         cooldown_seconds: float = 1.2,   # Enforce cooldown to prevent rebound duplicates
-        filter_alpha: float = 0.35      # Exponential smoothing factor (0 to 1)
+        filter_alpha: float = 0.75      # Exponential smoothing factor (0 to 1)
     ):
         self.threshold_low = threshold_low
         self.threshold_med = threshold_med

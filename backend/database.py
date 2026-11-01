@@ -365,10 +365,15 @@ class Database:
             return [dict(row) for row in cursor.fetchall()]
 
     def get_hazards(self) -> List[Dict[str, Any]]:
-        """Retrieve all active hazard clusters for mapping."""
+        """Retrieve all active hazard clusters for mapping, including synthetic source flag."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM hazards ORDER BY last_reported DESC")
+            cursor.execute("""
+                SELECT h.*,
+                    COALESCE((SELECT MAX(e.is_synthetic) FROM events e WHERE e.hazard_id = h.id), 0) AS is_synthetic
+                FROM hazards h
+                ORDER BY h.last_reported DESC
+            """)
             return [dict(row) for row in cursor.fetchall()]
 
     def get_statistics(self) -> Dict[str, Any]:

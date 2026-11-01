@@ -161,6 +161,9 @@ class HazardMapManager {
                             <span>Last Recorded:</span>
                             <span>${lastReportedStr}</span>
                         </div>
+                        <div class="popup-source-tag ${hazard.is_synthetic ? 'badge-simulated' : 'badge-live'}">
+                            ${hazard.is_synthetic ? '🧪 Source: Simulated Demo Replay (Test GPS)' : '📱 Source: Live Smartphone Sensor'}
+                        </div>
                         <div class="p-coords">
                             ${lat.toFixed(6)}, ${lon.toFixed(6)}
                         </div>
@@ -232,6 +235,14 @@ class HazardMapManager {
     panToCoordinates(lat, lon, zoom = 17) {
         if (this.map && lat && lon) {
             this.map.setView([lat, lon], zoom, { animate: true });
+        }
+    }
+
+    invalidateSize() {
+        if (this.map) {
+            setTimeout(() => {
+                this.map.invalidateSize();
+            }, 100);
         }
     }
 }

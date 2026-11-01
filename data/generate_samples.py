@@ -113,27 +113,26 @@ def generate_pothole_csv(filename="data/sample_pothole.csv", duration_sec=20.0):
         lat = round(12.821500 + progress * 0.0020, 6)
         lon = round(80.041800 + progress * 0.0016, 6)
 
-        vibe_x = float(np.random.normal(0, 0.20))
-        vibe_y = float(np.random.normal(0, 0.20))
-        vibe_z = float(np.random.normal(0, 0.25))
+        vibe_x = float(np.random.normal(0, 0.15))
+        vibe_y = float(np.random.normal(0, 0.15))
+        vibe_z = float(np.random.normal(0, 0.20))
 
         z_extra = 0.0
         x_extra = 0.0
 
-        # Pothole 1: Medium sharp drop and jolt (peak dynamic ~7.5)
+        # Pothole 1: Medium sharp drop and jolt (peak dynamic ~8.0 m/s^2)
         dt1 = t - pothole1_time
-        if 0.0 <= dt1 <= 0.25:
-            # Drop then sudden rebound spike
-            decay = math.exp(-dt1 * 12.0)
-            z_extra = -7.0 * math.sin(dt1 * 35.0) * decay
-            x_extra = 2.2 * decay
+        if 0.0 <= dt1 <= 0.35:
+            decay = math.exp(-dt1 * 8.0)
+            z_extra = 8.2 * math.cos(dt1 * 25.0) * decay
+            x_extra = 2.0 * decay
 
-        # Pothole 2: Severe High impact (peak dynamic ~14.0)
+        # Pothole 2: Severe High impact (peak dynamic ~14.5 m/s^2)
         dt2 = t - pothole2_time
-        if 0.0 <= dt2 <= 0.35:
-            decay = math.exp(-dt2 * 10.0)
-            z_extra = 14.5 * math.cos(dt2 * 40.0) * decay
-            x_extra = 4.5 * decay
+        if 0.0 <= dt2 <= 0.40:
+            decay = math.exp(-dt2 * 7.0)
+            z_extra = 15.2 * math.cos(dt2 * 25.0) * decay
+            x_extra = 4.2 * decay
 
         rows.append({
             "timestamp": round(t, 3),

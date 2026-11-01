@@ -70,8 +70,16 @@ def static_files(path):
 
 @app.route("/api/health", methods=["GET"])
 def health_check():
-    """System status and LAN connection details."""
+    """System status, database health, and connection details."""
     local_ip = get_local_ip()
+    db_connected = True
+    db_stats = {}
+    try:
+        db_stats = db.get_statistics()
+    except Exception as e:
+        db_connected = False
+        db_stats = {"error": str(e)}
+
     return jsonify({
         "status": "healthy",
         "service": "KineticPothole API",
@@ -79,6 +87,12 @@ def health_check():
         "server_time": time.time(),
         "local_ip": local_ip,
         "phone_access_url": f"http://{local_ip}:5000",
+        "database": {
+            "connected": db_connected,
+            "engine": "SQLite",
+            "total_events": db_stats.get("total_events", 0),
+            "total_hazards": db_stats.get("total_hazards", 0)
+        },
         "detector_settings": {
             "threshold_low": detector.threshold_low,
             "threshold_med": detector.threshold_med,

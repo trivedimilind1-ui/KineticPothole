@@ -1,6 +1,6 @@
 /**
- * KineticPothole — Core Application Controller
- * Connects Smartphone Sensors, Signal Processing, API, Map, and Demo Modes
+ * KineticPothole — Core Application Controller (Hackathon Edition)
+ * Connects Smartphone Sensors, Signal Processing, API, Map, Demo Replay & Presentation Mode
  */
 
 (function () {
@@ -8,16 +8,16 @@
 
     // Application State
     const state = {
-        mode: 'live', // 'live' | 'csv' | 'synthetic'
+        mode: 'live', // 'live' | 'demo'
         isDetecting: false,
         deviceMotionListener: null,
         geolocationWatchId: null,
-        
+
         // Latest GPS telemetry
         currentGps: {
             lat: 12.823050,
             lon: 80.044200,
-            accuracy: 5.0,
+            accuracy: 4.5,
             timestamp: Date.now()
         },
         hasRealGps: false,
@@ -27,58 +27,102 @@
         sampleIntervals: [],
         currentFrequencyHz: 0.0,
 
-        // In-memory ring buffer of recent sensor samples
-        sampleBuffer: [],
-        maxBufferSize: 300,
-
         // Device identification
         deviceId: 'device-' + (localStorage.getItem('kp_device_id') || Math.random().toString(36).substring(2, 9)),
         tripId: 'trip-' + Date.now(),
 
-        // CSV Replay State
-        csvData: [],
-        csvReplayIndex: 0,
-        csvReplayTimer: null,
-        csvReplaySpeed: 2,
-        isCsvReplaying: false,
+        // Demo Replay Engine
+        activeScenario: null, // 'normal' | 'speedbreaker' | 'pothole'
+        demoData: [],
+        demoReplayIndex: 0,
+        demoReplayTimer: null,
+        demoReplaySpeed: 2,
+        isDemoPlaying: false,
+
+        // Presentation Mode
+        isPresentationMode: false,
+        isMapFullscreen: false,
+
+        // Event filter
+        eventFilter: 'ALL',
+        eventsCache: [],
 
         // Calibration State
         isCalibrating: false,
         calibrationBuffer: [],
-        calibrationTimer: null
+        calibrationTimer: null,
+
+        // Last detected event for toast
+        lastDetectedEvent: null
     };
 
     localStorage.setItem('kp_device_id', state.deviceId);
 
-    // DOM Elements
+    // DOM Elements Cache
     const elements = {
         // Nav & Status
         systemStatusDot: document.getElementById('systemStatusDot'),
         systemStatusText: document.getElementById('systemStatusText'),
+        modeLiveBtn: document.getElementById('modeLiveBtn'),
+        modeDemoBtn: document.getElementById('modeDemoBtn'),
+        presentationModeBtn: document.getElementById('presentationModeBtn'),
         startDetectionBtn: document.getElementById('startDetectionBtn'),
         stopDetectionBtn: document.getElementById('stopDetectionBtn'),
         calibrateBtn: document.getElementById('calibrateBtn'),
         qrModalBtn: document.getElementById('qrModalBtn'),
         resetDemoBtn: document.getElementById('resetDemoBtn'),
+        resetDemoFromStripBtn: document.getElementById('resetDemoFromStripBtn'),
+
+        // Health Indicators
+        healthSensorDot: document.getElementById('healthSensorDot'),
+        healthSensorVal: document.getElementById('healthSensorVal'),
+        healthGpsDot: document.getElementById('healthGpsDot'),
+        healthGpsVal: document.getElementById('healthGpsVal'),
+        healthBackendDot: document.getElementById('healthBackendDot'),
+        healthBackendVal: document.getElementById('healthBackendVal'),
+        healthDatabaseDot: document.getElementById('healthDatabaseDot'),
+        healthDatabaseVal: document.getElementById('healthDatabaseVal'),
+
+        // Banners & Controls
         noticeBanner: document.getElementById('noticeBanner'),
         noticeText: document.getElementById('noticeText'),
         noticeIcon: document.getElementById('noticeIcon'),
         closeNoticeBtn: document.getElementById('closeNoticeBtn'),
+        demoControlStrip: document.getElementById('demoControlStrip'),
 
-        // Mode Switchers & Control Strips
-        modeLiveBtn: document.getElementById('modeLiveBtn'),
-        modeCsvBtn: document.getElementById('modeCsvBtn'),
-        modeSyntheticBtn: document.getElementById('modeSyntheticBtn'),
-        csvControlStrip: document.getElementById('csvControlStrip'),
-        syntheticControlStrip: document.getElementById('syntheticControlStrip'),
+        // 3 Demo Scenario Buttons
+        demoNormalBtn: document.getElementById('demoNormalBtn'),
+        demoSpeedBreakerBtn: document.getElementById('demoSpeedBreakerBtn'),
+        demoPotholeBtn: document.getElementById('demoPotholeBtn'),
+        demoPlayPauseBtn: document.getElementById('demoPlayPauseBtn'),
+        demoPlayIcon: document.getElementById('demoPlayIcon'),
+        demoPlayText: document.getElementById('demoPlayText'),
+        demoProgressBar: document.getElementById('demoProgressBar'),
+        demoProgressText: document.getElementById('demoProgressText'),
+        demoActiveDatasetBadge: document.getElementById('demoActiveDatasetBadge'),
+        activeDatasetName: document.getElementById('activeDatasetName'),
+        speedButtons: document.querySelectorAll('.speed-btn'),
 
-        // Statistics
+        // Toast Alert
+        impactAlertToast: document.getElementById('impactAlertToast'),
+        toastIndicator: document.getElementById('toastIndicator'),
+        toastSeverity: document.getElementById('toastSeverity'),
+        toastSourceTag: document.getElementById('toastSourceTag'),
+        toastTitle: document.getElementById('toastTitle'),
+        toastPeak: document.getElementById('toastPeak'),
+        toastRms: document.getElementById('toastRms'),
+        toastCoords: document.getElementById('toastCoords'),
+        toastLocateBtn: document.getElementById('toastLocateBtn'),
+        closeToastBtn: document.getElementById('closeToastBtn'),
+
+        // Statistics Cards
         statTotalEvents: document.getElementById('statTotalEvents'),
         statHighEvents: document.getElementById('statHighEvents'),
         statMedEvents: document.getElementById('statMedEvents'),
         statTotalHazards: document.getElementById('statTotalHazards'),
 
         // Telemetry Readouts
+        telemetrySourceTag: document.getElementById('telemetrySourceTag'),
         samplingRateBadge: document.getElementById('samplingRateBadge'),
         accelX: document.getElementById('accelX'),
         accelY: document.getElementById('accelY'),
@@ -91,7 +135,7 @@
         gpsCoords: document.getElementById('gpsCoords'),
         gpsAccuracyBadge: document.getElementById('gpsAccuracyBadge'),
 
-        // Shockwave Details
+        // Shockwave Details Card
         lastEventSeverityBadge: document.getElementById('lastEventSeverityBadge'),
         impactHazardType: document.getElementById('impactHazardType'),
         impactJerk: document.getElementById('impactJerk'),
@@ -99,27 +143,23 @@
         impactLocation: document.getElementById('impactLocation'),
         impactTime: document.getElementById('impactTime'),
 
-        // History Table
+        // Map Card & Actions
+        mapCard: document.getElementById('mapCard'),
+        mapFullscreenBtn: document.getElementById('mapFullscreenBtn'),
+        mapCenterCampusBtn: document.getElementById('mapCenterCampusBtn'),
+        mapCenterUserBtn: document.getElementById('mapCenterUserBtn'),
+        refreshMapBtn: document.getElementById('refreshMapBtn'),
+
+        // History Panel
         eventTableBody: document.getElementById('eventTableBody'),
         historyCountBadge: document.getElementById('historyCountBadge'),
+        filterButtons: document.querySelectorAll('.filter-btn'),
 
-        // CSV Replay
-        csvDatasetSelect: document.getElementById('csvDatasetSelect'),
-        loadPresetCsvBtn: document.getElementById('loadPresetCsvBtn'),
-        customCsvInput: document.getElementById('customCsvInput'),
-        customFileName: document.getElementById('customFileName'),
-        csvReplayToggleBtn: document.getElementById('csvReplayToggleBtn'),
-        csvProgressBar: document.getElementById('csvProgressBar'),
-        csvProgressText: document.getElementById('csvProgressText'),
-        speedButtons: document.querySelectorAll('.speed-btn'),
+        // Presentation Mode Controls
+        presentationOverlayControls: document.getElementById('presentationOverlayControls'),
+        exitPresentationBtn: document.getElementById('exitPresentationBtn'),
 
-        // Synthetic Buttons
-        simSmoothBtn: document.getElementById('simSmoothBtn'),
-        simSpeedBreakerBtn: document.getElementById('simSpeedBreakerBtn'),
-        simMedPotholeBtn: document.getElementById('simMedPotholeBtn'),
-        simHighPotholeBtn: document.getElementById('simHighPotholeBtn'),
-
-        // Calibration Modal
+        // Modals
         calibrationModal: document.getElementById('calibrationModal'),
         closeCalibrateModalBtn: document.getElementById('closeCalibrateModalBtn'),
         startCalibBtn: document.getElementById('startCalibBtn'),
@@ -133,21 +173,15 @@
         calibThreshMed: document.getElementById('calibThreshMed'),
         calibThreshHigh: document.getElementById('calibThreshHigh'),
 
-        // QR Modal
         qrModal: document.getElementById('qrModal'),
         closeQrModalBtn: document.getElementById('closeQrModalBtn'),
         qrCodeImage: document.getElementById('qrCodeImage'),
         phoneAccessUrl: document.getElementById('phoneAccessUrl'),
-        copyPhoneUrlBtn: document.getElementById('copyPhoneUrlBtn'),
-
-        // Map buttons
-        mapCenterCampusBtn: document.getElementById('mapCenterCampusBtn'),
-        mapCenterUserBtn: document.getElementById('mapCenterUserBtn'),
-        refreshMapBtn: document.getElementById('refreshMapBtn')
+        copyPhoneUrlBtn: document.getElementById('copyPhoneUrlBtn')
     };
 
     // ==========================================
-    // NOTIFICATION & STATUS HELPERS
+    // NOTIFICATIONS & STATUS HELPERS
     // ==========================================
 
     function showNotice(message, icon = 'ℹ️', durationMs = 5000) {
@@ -170,11 +204,80 @@
     }
 
     // ==========================================
-    // SMARTPHONE SENSOR INTEGRATION (MODE A)
+    // CONNECTION HEALTH MONITORING
+    // ==========================================
+
+    async function checkSystemHealth() {
+        const startTime = performance.now();
+        try {
+            const res = await fetch('/api/health');
+            const latency = Math.round(performance.now() - startTime);
+
+            if (res.ok) {
+                const data = await res.json();
+                
+                // Backend Status
+                if (elements.healthBackendDot) elements.healthBackendDot.className = 'h-dot dot-green';
+                if (elements.healthBackendVal) elements.healthBackendVal.innerText = `Online (${latency}ms)`;
+
+                // Database Status
+                const dbInfo = data.database || {};
+                if (dbInfo.connected) {
+                    if (elements.healthDatabaseDot) elements.healthDatabaseDot.className = 'h-dot dot-green';
+                    if (elements.healthDatabaseVal) {
+                        elements.healthDatabaseVal.innerText = `SQLite Connected (${dbInfo.total_events} events, ${dbInfo.total_hazards} hazards)`;
+                    }
+                } else {
+                    if (elements.healthDatabaseDot) elements.healthDatabaseDot.className = 'h-dot dot-red';
+                    if (elements.healthDatabaseVal) elements.healthDatabaseVal.innerText = 'Database Error';
+                }
+            } else {
+                throw new Error('Health check returned non-200');
+            }
+        } catch (err) {
+            if (elements.healthBackendDot) elements.healthBackendDot.className = 'h-dot dot-red';
+            if (elements.healthBackendVal) elements.healthBackendVal.innerText = 'Backend Offline';
+            if (elements.healthDatabaseDot) elements.healthDatabaseDot.className = 'h-dot dot-red';
+            if (elements.healthDatabaseVal) elements.healthDatabaseVal.innerText = 'Disconnected';
+        }
+
+        // Sensor & GPS Health state based on mode
+        if (state.mode === 'live') {
+            if (state.isDetecting) {
+                if (elements.healthSensorDot) elements.healthSensorDot.className = 'h-dot dot-green';
+                if (elements.healthSensorVal) elements.healthSensorVal.innerText = `Active (${state.currentFrequencyHz.toFixed(1)} Hz)`;
+            } else {
+                if (elements.healthSensorDot) elements.healthSensorDot.className = 'h-dot dot-yellow';
+                if (elements.healthSensorVal) elements.healthSensorVal.innerText = 'Standby (Click Start Detection)';
+            }
+
+            if (state.hasRealGps) {
+                if (elements.healthGpsDot) elements.healthGpsDot.className = 'h-dot dot-green';
+                if (elements.healthGpsVal) elements.healthGpsVal.innerText = `Live GPS (±${state.currentGps.accuracy.toFixed(1)}m)`;
+            } else {
+                if (elements.healthGpsDot) elements.healthGpsDot.className = 'h-dot dot-yellow';
+                if (elements.healthGpsVal) elements.healthGpsVal.innerText = 'Default SRM Campus (Waiting for GPS)';
+            }
+        } else {
+            // Demo Mode
+            if (state.isDemoPlaying) {
+                if (elements.healthSensorDot) elements.healthSensorDot.className = 'h-dot dot-green';
+                if (elements.healthSensorVal) elements.healthSensorVal.innerText = `Replaying Dataset (${(50 * state.demoReplaySpeed).toFixed(0)} Hz)`;
+            } else {
+                if (elements.healthSensorDot) elements.healthSensorDot.className = 'h-dot dot-yellow';
+                if (elements.healthSensorVal) elements.healthSensorVal.innerText = 'Dataset Ready to Replay';
+            }
+
+            if (elements.healthGpsDot) elements.healthGpsDot.className = 'h-dot dot-green';
+            if (elements.healthGpsVal) elements.healthGpsVal.innerText = 'Test Corridor GPS (SRM / GST Road)';
+        }
+    }
+
+    // ==========================================
+    // LIVE SENSOR INTEGRATION (MODE A)
     // ==========================================
 
     async function requestMotionPermission() {
-        // iOS 13+ requires explicit user gesture permission
         if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
             try {
                 const response = await DeviceMotionEvent.requestPermission();
@@ -184,61 +287,42 @@
                 }
                 return true;
             } catch (err) {
-                console.error('Motion permission error:', err);
                 showNotice('Could not request motion permission: ' + err.message, '⚠️');
                 return false;
             }
         }
-        return true; // Non-iOS or older browsers
+        return true;
     }
 
     function startGeolocation() {
-        if (!navigator.geolocation) {
-            console.warn('Geolocation not supported on this browser');
-            return;
-        }
+        if (!navigator.geolocation) return;
 
         state.geolocationWatchId = navigator.geolocation.watchPosition(
             position => {
                 state.currentGps = {
                     lat: position.coords.latitude,
                     lon: position.coords.longitude,
-                    accuracy: position.coords.accuracy || 10.0,
+                    accuracy: position.coords.accuracy || 5.0,
                     timestamp: position.timestamp || Date.now()
                 };
                 state.hasRealGps = true;
 
-                // Update UI coords
                 if (elements.gpsCoords) {
                     elements.gpsCoords.innerText = `${state.currentGps.lat.toFixed(6)}, ${state.currentGps.lon.toFixed(6)}`;
                 }
-
                 if (elements.gpsAccuracyBadge) {
-                    const acc = state.currentGps.accuracy;
-                    elements.gpsAccuracyBadge.innerText = `Acc: ± ${acc.toFixed(1)}m`;
-                    if (acc <= 15) {
-                        elements.gpsAccuracyBadge.className = 'gps-acc-badge badge-good';
-                    } else {
-                        elements.gpsAccuracyBadge.className = 'gps-acc-badge badge-poor';
-                    }
+                    elements.gpsAccuracyBadge.innerText = `Acc: ± ${state.currentGps.accuracy.toFixed(1)}m`;
+                    elements.gpsAccuracyBadge.className = state.currentGps.accuracy <= 15 ? 'gps-acc-badge badge-good' : 'gps-acc-badge badge-poor';
                 }
 
-                // Update user marker on Leaflet map
                 if (window.hazardMap) {
                     window.hazardMap.updateUserPosition(state.currentGps.lat, state.currentGps.lon, state.currentGps.accuracy);
                 }
             },
             err => {
-                console.warn('Geolocation watch error:', err.message);
-                if (elements.gpsAccuracyBadge) {
-                    elements.gpsAccuracyBadge.innerText = 'GPS: Default SRM';
-                }
+                console.warn('Geolocation error:', err.message);
             },
-            {
-                enableHighAccuracy: true,
-                maximumAge: 2000,
-                timeout: 10000
-            }
+            { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
         );
     }
 
@@ -252,7 +336,7 @@
     function handleDeviceMotion(event) {
         const now = performance.now();
 
-        // 1. Calculate actual sampling frequency (Hz)
+        // Measure sampling rate
         if (state.lastSampleTimestamp !== null) {
             const dt = now - state.lastSampleTimestamp;
             if (dt > 0) {
@@ -267,21 +351,15 @@
         }
         state.lastSampleTimestamp = now;
 
-        // 2. Read accelerometer values
-        // Some devices provide accelerationIncludingGravity, some provide acceleration
         const acc = event.accelerationIncludingGravity || event.acceleration;
-        if (!acc || (acc.x === null && acc.y === null && acc.z === null)) {
-            return;
-        }
+        if (!acc || (acc.x === null && acc.y === null && acc.z === null)) return;
 
         const x = acc.x || 0.0;
         const y = acc.y || 0.0;
         const z = acc.z || 0.0;
 
-        // 3. Process reading through common pipeline
-        const timestamp = Date.now() / 1000.0;
         const sample = {
-            timestamp: timestamp,
+            timestamp: Date.now() / 1000.0,
             x: x,
             y: y,
             z: z,
@@ -293,46 +371,43 @@
             is_synthetic: false
         };
 
-        processSensorSample(sample);
+        processSampleThroughPipeline(sample);
     }
 
-    // Common sample processing engine
-    async function processSensorSample(sample) {
-        // Calculate magnitude: A = sqrt(x² + y² + z²)
+    // Common Pipeline: Live and Demo use this exact execution path
+    async function processSampleThroughPipeline(sample) {
         const rawMagnitude = Math.sqrt(sample.x * sample.x + sample.y * sample.y + sample.z * sample.z);
-        // Dynamic acceleration: |A - 9.81|
         const dynamicAccel = Math.abs(rawMagnitude - 9.80665);
 
-        // Update telemetry gauges in UI
+        // Update gauges
         if (elements.accelX) elements.accelX.innerText = sample.x.toFixed(2);
         if (elements.accelY) elements.accelY.innerText = sample.y.toFixed(2);
         if (elements.accelZ) elements.accelZ.innerText = sample.z.toFixed(2);
         if (elements.rawMagVal) elements.rawMagVal.innerText = `${rawMagnitude.toFixed(2)} m/s²`;
         if (elements.dynAccelVal) elements.dynAccelVal.innerText = `${dynamicAccel.toFixed(2)} m/s²`;
 
-        // Update mini progress bars
+        // Update meter bars
         if (elements.meterX) elements.meterX.style.width = `${Math.min(100, Math.abs(sample.x) * 5)}%`;
         if (elements.meterY) elements.meterY.style.width = `${Math.min(100, Math.abs(sample.y) * 5)}%`;
         if (elements.meterZ) elements.meterZ.style.width = `${Math.min(100, (Math.abs(sample.z) / 20) * 100)}%`;
 
-        // Append to rolling chart
+        // Real-time chart update
         if (window.liveChart) {
             window.liveChart.appendReading(dynamicAccel, sample.z);
         }
 
-        // Calibration collection mode
+        // Move user marker on map as coordinates update
+        if (sample.lat && sample.lon && window.hazardMap) {
+            window.hazardMap.updateUserPosition(sample.lat, sample.lon, sample.accuracy || 5);
+        }
+
+        // Buffer during calibration mode
         if (state.isCalibrating) {
             state.calibrationBuffer.push(sample);
             return;
         }
 
-        // Buffer in memory
-        state.sampleBuffer.push(sample);
-        if (state.sampleBuffer.length > state.maxBufferSize) {
-            state.sampleBuffer.shift();
-        }
-
-        // Stream sample to backend detector
+        // Stream reading to Flask detector backend
         try {
             const res = await fetch('/api/feed_sample', {
                 method: 'POST',
@@ -347,20 +422,23 @@
                 }
             }
         } catch (err) {
-            // Backend offline or local network drop; silently handle
+            // Handled gracefully
         }
     }
 
     function onRoadImpactDetected(event) {
-        // Trigger shockwave visualizer
+        state.lastDetectedEvent = event;
+        const severity = (event.severity || 'LOW').toUpperCase();
+        const isSim = Boolean(event.is_synthetic);
+
+        // 1. Shockwave canvas visualizer trigger
         if (window.shockwaveVisualizer) {
             window.shockwaveVisualizer.triggerImpact(event);
         }
 
-        // Update shockwave details card
-        const severity = (event.severity || 'LOW').toUpperCase();
+        // 2. Update shockwave details card
         if (elements.lastEventSeverityBadge) {
-            elements.lastEventSeverityBadge.innerText = severity + ' IMPACT';
+            elements.lastEventSeverityBadge.innerText = `${severity} IMPACT`;
             elements.lastEventSeverityBadge.className = `severity-pill badge-${severity.toLowerCase()}`;
         }
         if (elements.impactHazardType) {
@@ -381,13 +459,51 @@
             elements.impactTime.innerText = d.toLocaleTimeString();
         }
 
-        // Refresh hazards on Leaflet map
+        // 3. Show high-visibility Alert Toast notification
+        showImpactToast(event);
+
+        // 4. Update Leaflet map and pan smoothly to the detected event GPS coordinates
         if (window.hazardMap) {
             window.hazardMap.fetchAndRenderHazards();
+            if (event.lat && event.lon) {
+                window.hazardMap.panToCoordinates(event.lat, event.lon, 17);
+            }
         }
 
-        // Update statistics cards and event audit table
+        // 5. Refresh metrics and event history table
         refreshDashboardData();
+    }
+
+    function showImpactToast(event) {
+        if (!elements.impactAlertToast) return;
+
+        const severity = (event.severity || 'LOW').toUpperCase();
+        const peak = parseFloat(event.peak_dynamic_accel || 0).toFixed(1);
+        const rms = parseFloat(event.rms || 0).toFixed(1);
+        const isSim = Boolean(event.is_synthetic);
+
+        elements.toastSeverity.innerText = `${severity} IMPACT DETECTED`;
+        elements.toastSeverity.className = `toast-severity-badge badge-${severity.toLowerCase()}`;
+        
+        elements.toastSourceTag.innerText = isSim ? '🧪 SIMULATED DEMO EVENT' : '📱 LIVE PHONE SENSOR';
+        elements.toastSourceTag.style.color = isSim ? '#c4b5fd' : '#10b981';
+
+        elements.toastTitle.innerText = event.hazard_type ?
+            event.hazard_type.charAt(0).toUpperCase() + event.hazard_type.slice(1) : 'Road Impact Detected';
+
+        elements.toastPeak.innerText = `${peak} m/s²`;
+        elements.toastRms.innerText = rms;
+        elements.toastCoords.innerText = event.lat && event.lon ?
+            `${parseFloat(event.lat).toFixed(5)}, ${parseFloat(event.lon).toFixed(5)}` : 'Unlocalized';
+
+        elements.toastIndicator.style.background = severity === 'HIGH' ? '#ef4444' : (severity === 'MEDIUM' ? '#f59e0b' : '#10b981');
+
+        elements.impactAlertToast.classList.remove('hidden');
+
+        // Auto-dismiss after 6s
+        setTimeout(() => {
+            elements.impactAlertToast.classList.add('hidden');
+        }, 6000);
     }
 
     async function startLiveDetection() {
@@ -398,31 +514,32 @@
         setSystemStatus('Sensors Active', 'active');
         elements.startDetectionBtn.disabled = true;
         elements.stopDetectionBtn.disabled = false;
+        if (elements.telemetrySourceTag) {
+            elements.telemetrySourceTag.innerText = 'LIVE PHONE SENSOR';
+            elements.telemetrySourceTag.className = 'source-tag badge-live';
+        }
 
-        // Check if devicemotion fires on this device
-        let motionDetected = false;
+        // Check if device actually provides motion data
+        let motionFired = false;
         const testHandler = (e) => {
             if (e.accelerationIncludingGravity && e.accelerationIncludingGravity.z !== null) {
-                motionDetected = true;
+                motionFired = true;
             }
             window.removeEventListener('devicemotion', testHandler);
         };
         window.addEventListener('devicemotion', testHandler);
 
         setTimeout(() => {
-            if (!motionDetected && state.mode === 'live') {
-                showNotice('No active accelerometer detected on this desktop browser. Switch to CSV Replay or Controlled Test mode, or open this page on your phone via "Phone Sync"!', 'ℹ️', 8000);
+            if (!motionFired && state.mode === 'live') {
+                showNotice('No active accelerometer on this desktop browser. Switch to "Judge Demo Mode" or open on phone via "Phone Sync"!', 'ℹ️', 8000);
             }
         }, 1500);
 
-        // Attach real-time motion listener
         state.deviceMotionListener = handleDeviceMotion;
         window.addEventListener('devicemotion', state.deviceMotionListener);
-
-        // Start GPS tracking
         startGeolocation();
 
-        showNotice('Live smartphone detection activated. Collecting 3-axis motion & GPS.', '✅', 4000);
+        showNotice('Live smartphone detection activated. Monitoring road vibrations.', '✅', 3000);
     }
 
     function stopLiveDetection() {
@@ -441,10 +558,10 @@
     }
 
     // ==========================================
-    // CSV SENSOR REPLAY (MODE B)
+    // JUDGE DEMO MODE & 3 SCENARIOS (MODE B)
     // ==========================================
 
-    function parseCsvText(csvText) {
+    function parseCsvData(csvText) {
         const lines = csvText.trim().split('\n');
         if (lines.length < 2) return [];
 
@@ -468,161 +585,281 @@
                     z: row.z,
                     lat: row.lat || 12.823050,
                     lon: row.lon || 80.044200,
-                    accuracy: row.accuracy || 5.0,
-                    device_id: 'csv-replayer',
-                    trip_id: 'csv-trip',
-                    is_synthetic: false
+                    accuracy: row.accuracy || 4.5,
+                    device_id: 'judge-demo-device',
+                    trip_id: 'judge-demo-trip',
+                    is_synthetic: true // Explicitly marked as simulated test dataset
                 });
             }
         }
         return samples;
     }
 
-    async function loadPresetCsv(path) {
+    async function selectDemoScenario(scenarioKey) {
+        state.activeScenario = scenarioKey;
+        stopDemoReplay();
+
+        // Update button states
+        elements.demoNormalBtn.classList.toggle('active', scenarioKey === 'normal');
+        elements.demoSpeedBreakerBtn.classList.toggle('active', scenarioKey === 'speedbreaker');
+        elements.demoPotholeBtn.classList.toggle('active', scenarioKey === 'pothole');
+
+        let csvUrl = '';
+        let label = '';
+
+        if (scenarioKey === 'normal') {
+            csvUrl = 'data/sample_normal.csv';
+            label = 'Normal Road (GST Road Smooth Baseline — 750 samples)';
+        } else if (scenarioKey === 'speedbreaker') {
+            csvUrl = 'data/sample_speedbreaker.csv';
+            label = 'Speed Breaker (Potheri Railway Stn Biphasic Wave — 900 samples)';
+        } else if (scenarioKey === 'pothole') {
+            csvUrl = 'data/sample_pothole.csv';
+            label = 'Pothole-like Impact (Service Lane Severe Jolts — 1000 samples)';
+        }
+
         try {
-            const res = await fetch(path);
-            if (!res.ok) throw new Error(`Could not load ${path}`);
+            const res = await fetch(csvUrl);
+            if (!res.ok) throw new Error(`Could not fetch ${csvUrl}`);
             const text = await res.text();
-            state.csvData = parseCsvText(text);
-            state.csvReplayIndex = 0;
-            updateCsvProgress();
-            showNotice(`Loaded ${state.csvData.length} samples from ${path.split('/').pop()}`, '📂', 3000);
+            state.demoData = parseCsvData(text);
+            state.demoReplayIndex = 0;
+
+            elements.activeDatasetName.innerText = label;
+            elements.demoActiveDatasetBadge.classList.remove('hidden');
+            elements.demoPlayPauseBtn.disabled = false;
+            updateDemoProgress();
+
+            // Center map on starting coordinate of dataset
+            if (state.demoData.length > 0 && window.hazardMap) {
+                const first = state.demoData[0];
+                window.hazardMap.panToCoordinates(first.lat, first.lon, 16);
+            }
+
+            showNotice(`Loaded: ${label}. Ready to replay through Python detection pipeline.`, '📂', 4000);
+            
+            // Auto start playing for seamless judge experience!
+            startDemoReplay();
+
         } catch (err) {
-            showNotice('Failed to load preset CSV: ' + err.message, '⚠️');
+            showNotice('Failed to load scenario dataset: ' + err.message, '⚠️');
         }
     }
 
-    function updateCsvProgress() {
-        const total = state.csvData.length;
-        const current = state.csvReplayIndex;
+    function updateDemoProgress() {
+        const total = state.demoData.length;
+        const current = state.demoReplayIndex;
         const pct = total > 0 ? (current / total) * 100 : 0;
-        if (elements.csvProgressBar) elements.csvProgressBar.style.width = `${pct}%`;
-        if (elements.csvProgressText) elements.csvProgressText.innerText = `${current} / ${total}`;
+        if (elements.demoProgressBar) elements.demoProgressBar.style.width = `${pct}%`;
+        if (elements.demoProgressText) elements.demoProgressText.innerText = `${current} / ${total}`;
     }
 
-    function startCsvReplay() {
-        if (!state.csvData || state.csvData.length === 0) {
-            showNotice('Please select or upload a CSV dataset first.', '⚠️');
-            return;
+    function startDemoReplay() {
+        if (!state.demoData || state.demoData.length === 0) return;
+
+        state.isDemoPlaying = true;
+        setSystemStatus('Replaying Demo Pipeline', 'active');
+        elements.demoPlayText.innerText = 'Pause Replay';
+        elements.demoPlayIcon.innerText = '⏸';
+        elements.demoPlayPauseBtn.className = 'btn btn-sm btn-danger';
+        if (elements.telemetrySourceTag) {
+            elements.telemetrySourceTag.innerText = 'SIMULATED DEMO REPLAY';
+            elements.telemetrySourceTag.className = 'source-tag badge-simulated';
         }
 
-        state.isCsvReplaying = true;
-        setSystemStatus('Replaying CSV', 'active');
-        elements.csvReplayToggleBtn.innerText = 'Pause Replay';
-        elements.csvReplayToggleBtn.className = 'btn btn-sm btn-danger';
+        const intervalMs = Math.max(4, Math.floor(20 / state.demoReplaySpeed));
 
-        // Replay tick interval (50Hz = 20ms base divided by speed)
-        const intervalMs = Math.max(4, Math.floor(20 / state.csvReplaySpeed));
-
-        state.csvReplayTimer = setInterval(() => {
-            if (state.csvReplayIndex >= state.csvData.length) {
-                stopCsvReplay();
-                showNotice('CSV replay completed!', '✅', 4000);
+        state.demoReplayTimer = setInterval(() => {
+            if (state.demoReplayIndex >= state.demoData.length) {
+                stopDemoReplay();
+                showNotice('Dataset replay completed. All events processed and mapped!', '✅', 4000);
                 return;
             }
 
-            const sample = state.csvData[state.csvReplayIndex];
-            state.csvReplayIndex++;
-            updateCsvProgress();
+            const sample = state.demoData[state.demoReplayIndex];
+            state.demoReplayIndex++;
+            updateDemoProgress();
 
-            // Calculate simulated frequency
             if (elements.samplingRateBadge) {
-                elements.samplingRateBadge.innerText = `${(50.0 * state.csvReplaySpeed).toFixed(1)} Hz`;
+                elements.samplingRateBadge.innerText = `${(50 * state.demoReplaySpeed).toFixed(1)} Hz`;
             }
 
-            // Route through standard detection pipeline
-            processSensorSample(sample);
+            // Pipe through exact same processing engine
+            processSampleThroughPipeline(sample);
         }, intervalMs);
     }
 
-    function stopCsvReplay() {
-        state.isCsvReplaying = false;
+    function stopDemoReplay() {
+        state.isDemoPlaying = false;
         setSystemStatus('Standby', 'standby');
-        if (elements.csvReplayToggleBtn) {
-            elements.csvReplayToggleBtn.innerText = 'Start Replay';
-            elements.csvReplayToggleBtn.className = 'btn btn-sm btn-primary';
-        }
-        if (state.csvReplayTimer) {
-            clearInterval(state.csvReplayTimer);
-            state.csvReplayTimer = null;
+        if (elements.demoPlayText) elements.demoPlayText.innerText = 'Play Dataset';
+        if (elements.demoPlayIcon) elements.demoPlayIcon.innerText = '▶';
+        if (elements.demoPlayPauseBtn) elements.demoPlayPauseBtn.className = 'btn btn-sm btn-primary';
+        if (state.demoReplayTimer) {
+            clearInterval(state.demoReplayTimer);
+            state.demoReplayTimer = null;
         }
     }
 
     // ==========================================
-    // CONTROLLED TEST MODE (MODE C)
+    // PRESENTATION MODE (BIG-SCREEN READY)
     // ==========================================
 
-    async function injectSyntheticSignal(type) {
-        showNotice(`Injecting synthetic ${type} signal...`, '🧪', 2000);
+    function togglePresentationMode() {
+        state.isPresentationMode = !state.isPresentationMode;
+        document.body.classList.toggle('presentation-mode', state.isPresentationMode);
+        elements.presentationOverlayControls.classList.toggle('hidden', !state.isPresentationMode);
 
-        const baseLat = 12.823050;
-        const baseLon = 80.044200;
-        const samples = [];
-        const startTs = Date.now() / 1000.0;
-        const dt = 0.02; // 50 Hz
-
-        let durationSec = 1.0;
-        if (type === 'smooth') durationSec = 2.0;
-        else if (type === 'speedbreaker') durationSec = 1.5;
-        else if (type === 'pothole_med') durationSec = 1.0;
-        else if (type === 'pothole_high') durationSec = 1.0;
-
-        const count = Math.floor(durationSec / dt);
-
-        for (let i = 0; i < count; i++) {
-            const t = startTs + i * dt;
-            let zVal = 9.80665;
-            let xVal = 0.1;
-            let yVal = 0.1;
-
-            if (type === 'smooth') {
-                zVal += (Math.random() - 0.5) * 0.3;
-            } else if (type === 'speedbreaker') {
-                // Biphasic wave between 0.3s and 1.1s
-                const relT = (i * dt) - 0.7;
-                if (Math.abs(relT) < 0.4) {
-                    zVal += 7.0 * Math.sin((relT / 0.4) * Math.PI * 2);
-                    xVal += 1.5 * Math.cos(relT * 5);
-                }
-            } else if (type === 'pothole_med') {
-                // Sharp jolt at 0.4s
-                const relT = (i * dt) - 0.4;
-                if (relT >= 0 && relT <= 0.2) {
-                    zVal += 8.0 * Math.exp(-relT * 15) * Math.cos(relT * 35);
-                }
-            } else if (type === 'pothole_high') {
-                // Severe impact at 0.3s
-                const relT = (i * dt) - 0.3;
-                if (relT >= 0 && relT <= 0.3) {
-                    zVal += 14.5 * Math.exp(-relT * 12) * Math.cos(relT * 40);
-                    xVal += 4.0 * Math.exp(-relT * 10);
-                }
-            }
-
-            samples.push({
-                timestamp: t,
-                x: xVal,
-                y: yVal,
-                z: zVal,
-                lat: baseLat + (Math.random() - 0.5) * 0.0008,
-                lon: baseLon + (Math.random() - 0.5) * 0.0008,
-                accuracy: 4.0,
-                device_id: 'synthetic-generator',
-                trip_id: 'test-trip-sim',
-                is_synthetic: true
-            });
+        if (state.isPresentationMode) {
+            showNotice('Presentation Mode Activated: High-contrast layout for projectors and judges.', '📽️', 3000);
         }
 
-        // Stream synthetic samples sequentially to visually display on live chart and meters
-        let idx = 0;
-        const interval = setInterval(() => {
-            if (idx >= samples.length) {
-                clearInterval(interval);
-                return;
+        if (window.hazardMap) {
+            window.hazardMap.invalidateSize();
+        }
+    }
+
+    function toggleMapFullscreen() {
+        state.isMapFullscreen = !state.isMapFullscreen;
+        elements.mapCard.classList.toggle('fullscreen-map', state.isMapFullscreen);
+        elements.mapFullscreenBtn.innerText = state.isMapFullscreen ? '⛶ Collapse' : '⛶ Expand';
+        if (window.hazardMap) {
+            window.hazardMap.invalidateSize();
+        }
+    }
+
+    // ==========================================
+    // DATA REFRESH & HISTORY PANEL
+    // ==========================================
+
+    async function refreshDashboardData() {
+        try {
+            // 1. Statistics
+            const statsRes = await fetch('/api/statistics');
+            if (statsRes.ok) {
+                const statsData = await statsRes.json();
+                const stats = statsData.statistics || {};
+                if (elements.statTotalEvents) elements.statTotalEvents.innerText = stats.total_events || 0;
+                if (elements.statHighEvents) elements.statHighEvents.innerText = stats.high_severity_events || 0;
+                if (elements.statMedEvents) elements.statMedEvents.innerText = stats.medium_severity_events || 0;
+                if (elements.statTotalHazards) elements.statTotalHazards.innerText = stats.total_hazards || 0;
             }
-            processSensorSample(samples[idx]);
-            idx++;
-        }, 15);
+
+            // 2. Events History
+            const eventsRes = await fetch('/api/events?limit=40');
+            if (eventsRes.ok) {
+                const eventsData = await eventsRes.json();
+                state.eventsCache = eventsData.events || [];
+                renderEventsTable();
+            }
+        } catch (err) {
+            console.warn('Dashboard data refresh error:', err);
+        }
+    }
+
+    function renderEventsTable() {
+        if (!elements.eventTableBody) return;
+
+        let filtered = state.eventsCache;
+        if (state.eventFilter !== 'ALL') {
+            filtered = state.eventsCache.filter(e => (e.severity || '').toUpperCase() === state.eventFilter);
+        }
+
+        if (elements.historyCountBadge) {
+            elements.historyCountBadge.innerText = `${filtered.length} detections`;
+        }
+
+        if (filtered.length === 0) {
+            elements.eventTableBody.innerHTML = `
+                <tr class="empty-row">
+                    <td colspan="8">No road impact events detected yet. Click "Start Detection" or run a demo scenario.</td>
+                </tr>
+            `;
+            return;
+        }
+
+        let html = '';
+        filtered.forEach(evt => {
+            const d = new Date(evt.timestamp > 10000000000 ? evt.timestamp : evt.timestamp * 1000);
+            const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            const sev = (evt.severity || 'LOW').toUpperCase();
+            const badgeClass = `badge-${sev.toLowerCase()}`;
+            const coordsStr = (evt.latitude && evt.longitude) ?
+                `${parseFloat(evt.latitude).toFixed(5)}, ${parseFloat(evt.longitude).toFixed(5)}` : 'None';
+            const peak = parseFloat(evt.peak_dynamic_accel || 0).toFixed(1);
+            const conf = Math.round((parseFloat(evt.confidence) || 0.6) * 100);
+            const hazardType = (evt.hazard_type || 'hazard').toUpperCase();
+            const isSynth = Boolean(evt.is_synthetic);
+
+            const sourceBadge = isSynth ?
+                `<span class="source-tag badge-simulated">🧪 DEMO</span>` :
+                `<span class="source-tag badge-live">📱 LIVE</span>`;
+
+            html += `
+                <tr>
+                    <td>${timeStr}</td>
+                    <td><span class="stat-badge ${badgeClass}">${sev}</span></td>
+                    <td>${hazardType}</td>
+                    <td><strong>${peak}</strong> m/s²</td>
+                    <td>${conf}%</td>
+                    <td>${sourceBadge}</td>
+                    <td><span class="mono-coords">${coordsStr}</span></td>
+                    <td>
+                        ${evt.latitude && evt.longitude ? 
+                            `<button class="btn btn-xs btn-outline locate-btn" data-lat="${evt.latitude}" data-lon="${evt.longitude}">Locate</button>` : 
+                            `<span class="text-muted">--</span>`}
+                    </td>
+                </tr>
+            `;
+        });
+
+        elements.eventTableBody.innerHTML = html;
+
+        // Attach locate button handlers
+        document.querySelectorAll('.locate-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const lat = parseFloat(e.target.getAttribute('data-lat'));
+                const lon = parseFloat(e.target.getAttribute('data-lon'));
+                if (window.hazardMap && lat && lon) {
+                    window.hazardMap.panToCoordinates(lat, lon, 18);
+                }
+            });
+        });
+    }
+
+    async function resetDemonstration() {
+        if (!confirm('Reset all road hazard detections, events, and statistics?')) return;
+
+        try {
+            stopDemoReplay();
+            stopLiveDetection();
+
+            const res = await fetch('/api/reset', { method: 'POST' });
+            if (res.ok) {
+                showNotice('All road hazard data has been reset to a clean state.', '🔄', 3000);
+                if (window.liveChart) window.liveChart.reset();
+                if (window.shockwaveVisualizer) window.shockwaveVisualizer.renderIdleGrid();
+                if (window.hazardMap) window.hazardMap.fetchAndRenderHazards();
+                
+                state.demoReplayIndex = 0;
+                updateDemoProgress();
+                
+                // Reset readouts
+                if (elements.accelX) elements.accelX.innerText = '0.00';
+                if (elements.accelY) elements.accelY.innerText = '0.00';
+                if (elements.accelZ) elements.accelZ.innerText = '9.81';
+                if (elements.rawMagVal) elements.rawMagVal.innerText = '9.81 m/s²';
+                if (elements.dynAccelVal) elements.dynAccelVal.innerText = '0.00 m/s²';
+                if (elements.lastEventSeverityBadge) {
+                    elements.lastEventSeverityBadge.innerText = 'No Impact';
+                    elements.lastEventSeverityBadge.className = 'severity-pill badge-none';
+                }
+
+                refreshDashboardData();
+            }
+        } catch (err) {
+            showNotice('Failed to reset: ' + err.message, '⚠️');
+        }
     }
 
     // ==========================================
@@ -632,7 +869,7 @@
     function openCalibrationModal() {
         elements.calibrationModal.classList.remove('hidden');
         elements.calibProgressBar.style.width = '0%';
-        elements.calibStatusText.innerText = 'Click "Start 5s Baseline" and keep vehicle steady or cruising smoothly.';
+        elements.calibStatusText.innerText = 'Click "Start 5s Baseline" and keep vehicle steady.';
         elements.startCalibBtn.disabled = false;
         elements.doneCalibBtn.disabled = true;
         elements.calibStatsPreview.classList.add('hidden');
@@ -653,7 +890,6 @@
         elements.startCalibBtn.disabled = true;
         setSystemStatus('Calibrating...', 'calibrating');
 
-        // Ensure motion listener is active during calibration
         if (!state.deviceMotionListener) {
             state.deviceMotionListener = handleDeviceMotion;
             window.addEventListener('devicemotion', state.deviceMotionListener);
@@ -672,17 +908,14 @@
                 clearInterval(state.calibrationTimer);
                 state.calibrationTimer = null;
                 state.isCalibrating = false;
-
-                // Send to backend calibration API
                 await submitCalibrationData();
             }
         }, 200);
     }
 
     async function submitCalibrationData() {
-        elements.calibStatusText.innerText = 'Analyzing baseline and calculating adaptive thresholds...';
+        elements.calibStatusText.innerText = 'Analyzing baseline vibration...';
 
-        // Fallback: if browser has no motion sensors, generate synthetic calibration samples
         if (state.calibrationBuffer.length < 10) {
             for (let i = 0; i < 50; i++) {
                 state.calibrationBuffer.push({
@@ -717,9 +950,7 @@
                 elements.calibStatusText.innerText = 'Baseline calibrated successfully!';
                 elements.doneCalibBtn.disabled = false;
                 setSystemStatus('Calibrated', 'standby');
-                showNotice('Detector calibrated to vehicle baseline vibration.', '✅', 4000);
-            } else {
-                elements.calibStatusText.innerText = 'Calibration failed on server.';
+                showNotice('Detector adaptive thresholds calibrated.', '✅', 4000);
             }
         } catch (err) {
             elements.calibStatusText.innerText = 'Network error during calibration.';
@@ -727,7 +958,7 @@
     }
 
     // ==========================================
-    // PHONE SYNC / QR MODAL
+    // QR PHONE MODAL
     // ==========================================
 
     async function openQrModal() {
@@ -737,7 +968,6 @@
                 const data = await res.json();
                 const phoneUrl = data.phone_access_url || window.location.href;
                 elements.phoneAccessUrl.innerText = phoneUrl;
-                // Generate QR code via free public API
                 elements.qrCodeImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(phoneUrl)}`;
             }
         } catch (e) {
@@ -752,207 +982,125 @@
     }
 
     // ==========================================
-    // DATA REFRESH & DASHBOARD METRICS
-    // ==========================================
-
-    async function refreshDashboardData() {
-        try {
-            // 1. Fetch statistics
-            const statsRes = await fetch('/api/statistics');
-            if (statsRes.ok) {
-                const statsData = await statsRes.json();
-                const stats = statsData.statistics;
-                if (elements.statTotalEvents) elements.statTotalEvents.innerText = stats.total_events || 0;
-                if (elements.statHighEvents) elements.statHighEvents.innerText = stats.high_severity_events || 0;
-                if (elements.statMedEvents) elements.statMedEvents.innerText = stats.medium_severity_events || 0;
-                if (elements.statTotalHazards) elements.statTotalHazards.innerText = stats.total_hazards || 0;
-            }
-
-            // 2. Fetch recent events table
-            const eventsRes = await fetch('/api/events?limit=25');
-            if (eventsRes.ok) {
-                const eventsData = await eventsRes.json();
-                renderEventTable(eventsData.events || []);
-            }
-        } catch (err) {
-            console.warn('Dashboard data refresh error:', err);
-        }
-    }
-
-    function renderEventTable(events) {
-        if (!elements.eventTableBody) return;
-
-        if (elements.historyCountBadge) {
-            elements.historyCountBadge.innerText = `${events.length} detections`;
-        }
-
-        if (events.length === 0) {
-            elements.eventTableBody.innerHTML = `
-                <tr class="empty-row">
-                    <td colspan="7">No road impact events detected yet. Click "Start Detection" or run a demo scenario.</td>
-                </tr>
-            `;
-            return;
-        }
-
-        let html = '';
-        events.forEach(evt => {
-            const d = new Date(evt.timestamp > 10000000000 ? evt.timestamp : evt.timestamp * 1000);
-            const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            const sev = (evt.severity || 'LOW').toUpperCase();
-            const badgeClass = `badge-${sev.toLowerCase()}`;
-            const coordsStr = (evt.latitude && evt.longitude) ?
-                `${parseFloat(evt.latitude).toFixed(5)}, ${parseFloat(evt.longitude).toFixed(5)}` : 'None';
-            const peak = parseFloat(evt.peak_dynamic_accel || 0).toFixed(1);
-            const conf = Math.round((parseFloat(evt.confidence) || 0.6) * 100);
-            const hazardType = (evt.hazard_type || 'hazard').toUpperCase();
-            const isSynth = evt.is_synthetic ? ' 🧪' : '';
-
-            html += `
-                <tr>
-                    <td>${timeStr}</td>
-                    <td><span class="stat-badge ${badgeClass}">${sev}</span></td>
-                    <td>${hazardType}${isSynth}</td>
-                    <td><strong>${peak}</strong> m/s²</td>
-                    <td>${conf}%</td>
-                    <td>${coordsStr}</td>
-                    <td>
-                        ${evt.latitude && evt.longitude ? 
-                            `<button class="btn btn-xs btn-outline locate-btn" data-lat="${evt.latitude}" data-lon="${evt.longitude}">Locate</button>` : 
-                            `<span class="text-muted">--</span>`}
-                    </td>
-                </tr>
-            `;
-        });
-
-        elements.eventTableBody.innerHTML = html;
-
-        // Attach locate button click handlers
-        document.querySelectorAll('.locate-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const lat = parseFloat(e.target.getAttribute('data-lat'));
-                const lon = parseFloat(e.target.getAttribute('data-lon'));
-                if (window.hazardMap && lat && lon) {
-                    window.hazardMap.panToCoordinates(lat, lon, 18);
-                }
-            });
-        });
-    }
-
-    async function resetAllData() {
-        if (!confirm('Reset all road hazard detections, events, and statistics?')) return;
-
-        try {
-            const res = await fetch('/api/reset', { method: 'POST' });
-            if (res.ok) {
-                showNotice('All data has been reset to clean slate.', '🔄', 3000);
-                if (window.liveChart) window.liveChart.reset();
-                if (window.shockwaveVisualizer) window.shockwaveVisualizer.renderIdleGrid();
-                if (window.hazardMap) window.hazardMap.fetchAndRenderHazards();
-                refreshDashboardData();
-            }
-        } catch (err) {
-            showNotice('Failed to reset data: ' + err.message, '⚠️');
-        }
-    }
-
-    // ==========================================
     // MODE SWITCHING LOGIC
     // ==========================================
 
-    function setMode(mode) {
+    function setAppMode(mode) {
         state.mode = mode;
 
-        // Update button active states
         elements.modeLiveBtn.classList.toggle('active', mode === 'live');
-        elements.modeCsvBtn.classList.toggle('active', mode === 'csv');
-        elements.modeSyntheticBtn.classList.toggle('active', mode === 'synthetic');
+        elements.modeDemoBtn.classList.toggle('active', mode === 'demo');
 
-        // Toggle control strips
-        elements.csvControlStrip.classList.toggle('hidden', mode !== 'csv');
-        elements.syntheticControlStrip.classList.toggle('hidden', mode !== 'synthetic');
+        elements.demoControlStrip.classList.toggle('hidden', mode !== 'demo');
 
-        if (mode === 'csv') {
+        if (mode === 'demo') {
             stopLiveDetection();
-            // Automatically preload the service lane pothole CSV if not already loaded
-            if (state.csvData.length === 0) {
-                loadPresetCsv('data/sample_pothole.csv');
+            // Default to Pothole scenario ready
+            if (!state.activeScenario) {
+                selectDemoScenario('pothole');
             }
-        } else if (mode === 'synthetic') {
-            stopLiveDetection();
-            stopCsvReplay();
-        } else if (mode === 'live') {
-            stopCsvReplay();
+            showNotice('Judge Demo Mode: Choose a test scenario to replay through the Python detector.', '🎬', 4000);
+        } else {
+            stopDemoReplay();
+            if (elements.telemetrySourceTag) {
+                elements.telemetrySourceTag.innerText = 'LIVE PHONE SENSOR';
+                elements.telemetrySourceTag.className = 'source-tag badge-live';
+            }
         }
+
+        checkSystemHealth();
     }
 
     // ==========================================
-    // INITIALIZATION & EVENT LISTENERS
+    // EVENT LISTENERS & BOOTSTRAP
     // ==========================================
 
     function initEventListeners() {
-        // Mode switchers
-        elements.modeLiveBtn.addEventListener('click', () => setMode('live'));
-        elements.modeCsvBtn.addEventListener('click', () => setMode('csv'));
-        elements.modeSyntheticBtn.addEventListener('click', () => setMode('synthetic'));
+        // Mode Switches
+        elements.modeLiveBtn.addEventListener('click', () => setAppMode('live'));
+        elements.modeDemoBtn.addEventListener('click', () => setAppMode('demo'));
 
-        // Top Action buttons
+        // Presentation Mode
+        elements.presentationModeBtn.addEventListener('click', togglePresentationMode);
+        elements.exitPresentationBtn.addEventListener('click', togglePresentationMode);
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && state.isPresentationMode) {
+                togglePresentationMode();
+            }
+            if ((e.key === 'p' || e.key === 'P') && !e.target.matches('input, textarea')) {
+                togglePresentationMode();
+            }
+        });
+
+        // Live Controls
         elements.startDetectionBtn.addEventListener('click', startLiveDetection);
         elements.stopDetectionBtn.addEventListener('click', stopLiveDetection);
         elements.calibrateBtn.addEventListener('click', openCalibrationModal);
         elements.qrModalBtn.addEventListener('click', openQrModal);
-        elements.resetDemoBtn.addEventListener('click', resetAllData);
+        elements.resetDemoBtn.addEventListener('click', resetDemonstration);
+        elements.resetDemoFromStripBtn.addEventListener('click', resetDemonstration);
         elements.closeNoticeBtn.addEventListener('click', () => elements.noticeBanner.classList.add('hidden'));
 
-        // CSV Replay controls
-        elements.loadPresetCsvBtn.addEventListener('click', () => {
-            const selected = elements.csvDatasetSelect.value;
-            loadPresetCsv(selected);
-        });
+        // 3 Demo Scenarios
+        elements.demoNormalBtn.addEventListener('click', () => selectDemoScenario('normal'));
+        elements.demoSpeedBreakerBtn.addEventListener('click', () => selectDemoScenario('speedbreaker'));
+        elements.demoPotholeBtn.addEventListener('click', () => selectDemoScenario('pothole'));
 
-        elements.customCsvInput.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            elements.customFileName.innerText = file.name;
-            const reader = new FileReader();
-            reader.onload = (evt) => {
-                state.csvData = parseCsvText(evt.target.result);
-                state.csvReplayIndex = 0;
-                updateCsvProgress();
-                showNotice(`Loaded ${state.csvData.length} samples from ${file.name}`, '📂', 3000);
-            };
-            reader.readAsText(file);
-        });
-
-        elements.csvReplayToggleBtn.addEventListener('click', () => {
-            if (state.isCsvReplaying) stopCsvReplay();
-            else startCsvReplay();
+        // Play/Pause & Speed
+        elements.demoPlayPauseBtn.addEventListener('click', () => {
+            if (state.isDemoPlaying) stopDemoReplay();
+            else startDemoReplay();
         });
 
         elements.speedButtons.forEach(btn => {
-            btn.addEventListener('click', (e) => {
+            btn.addEventListener('click', () => {
                 elements.speedButtons.forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
-                state.csvReplaySpeed = parseFloat(btn.getAttribute('data-speed'));
-                if (state.isCsvReplaying) {
-                    stopCsvReplay();
-                    startCsvReplay();
+                state.demoReplaySpeed = parseFloat(btn.getAttribute('data-speed'));
+                if (state.isDemoPlaying) {
+                    stopDemoReplay();
+                    startDemoReplay();
                 }
             });
         });
 
-        // Synthetic inject buttons
-        elements.simSmoothBtn.addEventListener('click', () => injectSyntheticSignal('smooth'));
-        elements.simSpeedBreakerBtn.addEventListener('click', () => injectSyntheticSignal('speedbreaker'));
-        elements.simMedPotholeBtn.addEventListener('click', () => injectSyntheticSignal('pothole_med'));
-        elements.simHighPotholeBtn.addEventListener('click', () => injectSyntheticSignal('pothole_high'));
+        // Toast interactions
+        elements.closeToastBtn.addEventListener('click', () => {
+            elements.impactAlertToast.classList.add('hidden');
+        });
+        elements.toastLocateBtn.addEventListener('click', () => {
+            if (state.lastDetectedEvent && state.lastDetectedEvent.lat && state.lastDetectedEvent.lon) {
+                if (window.hazardMap) {
+                    window.hazardMap.panToCoordinates(state.lastDetectedEvent.lat, state.lastDetectedEvent.lon, 18);
+                }
+            }
+            elements.impactAlertToast.classList.add('hidden');
+        });
 
-        // Calibration Modal
+        // Map Actions
+        if (elements.mapFullscreenBtn) elements.mapFullscreenBtn.addEventListener('click', toggleMapFullscreen);
+        if (elements.mapCenterCampusBtn) elements.mapCenterCampusBtn.addEventListener('click', () => window.hazardMap && window.hazardMap.centerOnCampus());
+        if (elements.mapCenterUserBtn) elements.mapCenterUserBtn.addEventListener('click', () => window.hazardMap && window.hazardMap.centerOnUser());
+        if (elements.refreshMapBtn) elements.refreshMapBtn.addEventListener('click', () => {
+            if (window.hazardMap) window.hazardMap.fetchAndRenderHazards();
+            refreshDashboardData();
+        });
+
+        // History Filters
+        elements.filterButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                elements.filterButtons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                state.eventFilter = btn.getAttribute('data-filter');
+                renderEventsTable();
+            });
+        });
+
+        // Modals
         elements.closeCalibrateModalBtn.addEventListener('click', closeCalibrationModal);
         elements.startCalibBtn.addEventListener('click', startCalibrationRun);
         elements.doneCalibBtn.addEventListener('click', closeCalibrationModal);
 
-        // QR Modal
         elements.closeQrModalBtn.addEventListener('click', closeQrModal);
         elements.copyPhoneUrlBtn.addEventListener('click', () => {
             navigator.clipboard.writeText(elements.phoneAccessUrl.innerText).then(() => {
@@ -961,30 +1109,14 @@
             });
         });
 
-        // Map buttons
-        if (elements.mapCenterCampusBtn) {
-            elements.mapCenterCampusBtn.addEventListener('click', () => {
-                if (window.hazardMap) window.hazardMap.centerOnCampus();
-            });
-        }
-        if (elements.mapCenterUserBtn) {
-            elements.mapCenterUserBtn.addEventListener('click', () => {
-                if (window.hazardMap) window.hazardMap.centerOnUser();
-            });
-        }
-        if (elements.refreshMapBtn) {
-            elements.refreshMapBtn.addEventListener('click', () => {
-                if (window.hazardMap) window.hazardMap.fetchAndRenderHazards();
-                refreshDashboardData();
-            });
-        }
-
-        // Periodic background poll for data updates (every 5 seconds)
-        setInterval(refreshDashboardData, 5000);
+        // Periodic Health and Data Checks
+        setInterval(checkSystemHealth, 3000);
+        setInterval(refreshDashboardData, 4000);
     }
 
     document.addEventListener('DOMContentLoaded', () => {
         initEventListeners();
+        checkSystemHealth();
         refreshDashboardData();
     });
 
