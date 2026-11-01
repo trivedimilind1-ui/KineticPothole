@@ -944,6 +944,13 @@ body {
     border-radius: 12px;
 }
 
+.map-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
 .map-legend {
     padding: 10px 18px;
     border-top: 1px solid var(--border-color);
@@ -1165,6 +1172,66 @@ body {
 }
 .qr-tips ul { padding-left: 20px; margin-top: 6px; }
 .qr-tips li { margin-bottom: 4px; }
+
+/* Custom Inputs & Dropdowns */
+.strip-select {
+    background: var(--bg-inset);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    padding: 7px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 0.8rem;
+    font-family: var(--font-mono);
+    outline: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.strip-select:hover {
+    border-color: rgba(0, 210, 255, 0.4);
+}
+
+.strip-select:focus {
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 10px rgba(0, 210, 255, 0.3);
+}
+
+.strip-select option {
+    background: #0d172b;
+    color: #e2e8f0;
+}
+
+.input-form-group {
+    margin-bottom: 14px;
+}
+
+.input-form-group label {
+    display: block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+
+.input-form-group input {
+    width: 100%;
+    background: var(--bg-inset);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    transition: all 0.2s;
+}
+
+.input-form-group input:focus {
+    outline: none;
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 10px rgba(0, 210, 255, 0.3);
+}
 
 /* Custom Leaflet Marker Styling */
 .custom-leaflet-div-icon {
@@ -1940,13 +2007,79 @@ body.presentation-mode .map-view {
     .health-strip {
         font-size: 0.7rem;
         justify-content: flex-start;
+        padding: 8px 14px;
+        overflow-x: auto;
     }
     .stats-grid {
         grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        padding: 0 14px;
+    }
+    .top-nav {
+        padding: 10px 14px;
+    }
+    .nav-left {
+        width: 100%;
+        justify-content: space-between;
+    }
+    .nav-right {
+        width: 100%;
+        justify-content: center;
+        gap: 6px;
+    }
+    .nav-right .btn {
+        padding: 6px 10px;
+        font-size: 0.75rem;
+    }
+    .cctv-panel {
+        margin: 10px 14px;
+        padding: 14px;
+    }
+    .cctv-controls-bar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+    }
+    .cctv-control-group {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 4px;
+    }
+    .cctv-action-group {
+        margin-left: 0;
+        width: 100%;
+        justify-content: space-between;
+    }
+    .cctv-action-group .btn {
+        flex: 1;
+    }
+    .map-view {
+        height: 380px;
+    }
+    .map-actions {
+        width: 100%;
+        justify-content: space-between;
+        margin-top: 8px;
+    }
+    .map-source-filter-group {
+        width: 100%;
+        display: flex;
+    }
+    .map-source-btn {
+        flex: 1;
+        text-align: center;
+        font-size: 0.65rem;
+    }
+    .computed-grid {
+        grid-template-columns: 1fr;
     }
     .impact-alert-toast {
         left: 14px;
         right: 14px;
         min-width: auto;
+    }
+    .mode-tab-btn {
+        padding: 6px 10px;
+        font-size: 0.75rem;
     }
 }

@@ -1309,13 +1309,14 @@
                     }
 
                     // Toast alert for dual confirmation
-                    showToastAlert({
+                    showImpactToast({
                         severity: 'HIGH',
                         is_synthetic: false,
-                        max_peak: 14.2,
+                        peak_dynamic_accel: 14.2,
                         rms: 4.8,
                         lat: topMatch.latitude,
-                        lon: topMatch.longitude
+                        lon: topMatch.longitude,
+                        hazard_type: 'Dual-Confirmed Road Hazard'
                     });
                     if (elements.toastSeverity) {
                         elements.toastSeverity.innerText = '⚡ DUAL-CONFIRMED ROAD HAZARD';
