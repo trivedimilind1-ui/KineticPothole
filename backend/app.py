@@ -23,8 +23,13 @@ from backend.cctv_detector import CCTVDetector
 from backend.sensor_fusion import SensorFusionEngine
 
 FRONTEND_DIR = os.path.join(PROJECT_DIR, "frontend")
-DB_PATH = os.path.join(BASE_DIR, "kinetic_pothole.db")
-CCTV_FRAMES_DIR = os.path.join(BASE_DIR, "cctv_frames")
+is_serverless = bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
+if is_serverless:
+    DB_PATH = "/tmp/kinetic_pothole.db"
+    CCTV_FRAMES_DIR = "/tmp/cctv_frames"
+else:
+    DB_PATH = os.path.join(BASE_DIR, "kinetic_pothole.db")
+    CCTV_FRAMES_DIR = os.path.join(BASE_DIR, "cctv_frames")
 os.makedirs(CCTV_FRAMES_DIR, exist_ok=True)
 
 app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
@@ -449,6 +454,8 @@ def process_cctv_video():
         video_path = os.path.join(PROJECT_DIR, "data", video_filename)
         if not os.path.exists(video_path):
             video_path = os.path.join(PROJECT_DIR, "data", "uploads", video_filename)
+        if not os.path.exists(video_path):
+            video_path = os.path.join("/tmp", "uploads", video_filename)
 
         if not os.path.exists(video_path):
             return jsonify({"error": f"Video file not found: {video_filename}"}), 404
@@ -517,7 +524,10 @@ def upload_cctv_video():
         if file.filename == "":
             return jsonify({"error": "Empty filename"}), 400
 
-        upload_dir = os.path.join(PROJECT_DIR, "data", "uploads")
+        if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+            upload_dir = "/tmp/uploads"
+        else:
+            upload_dir = os.path.join(PROJECT_DIR, "data", "uploads")
         os.makedirs(upload_dir, exist_ok=True)
         filename = f"upload_{int(time.time())}_{file.filename}"
         filepath = os.path.join(upload_dir, filename)
