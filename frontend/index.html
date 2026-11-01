@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>KineticPothole — Road Impact Detection & Mapping System</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    
+    <!-- Application Styles -->
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- Google Fonts for Modern Tech Dashboard -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body class="dark-theme">
+    <!-- Top Navigation Bar -->
+    <header class="top-nav">
+        <div class="nav-left">
+            <div class="brand-logo">
+                <div class="logo-pulse"></div>
+                <span class="logo-text">KINETIC<span class="logo-accent">POTHOLE</span></span>
+                <span class="version-tag">v1.0</span>
+            </div>
+            <div class="status-indicator-wrap">
+                <span id="systemStatusDot" class="status-dot standby"></span>
+                <span id="systemStatusText" class="status-text">Standby</span>
+            </div>
+        </div>
+
+        <div class="nav-center">
+            <!-- Mode Selector Switcher -->
+            <div class="mode-selector">
+                <button id="modeLiveBtn" class="mode-btn active" data-mode="live">
+                    <span class="icon">📱</span> Live Phone
+                </button>
+                <button id="modeCsvBtn" class="mode-btn" data-mode="csv">
+                    <span class="icon">📂</span> CSV Replay
+                </button>
+                <button id="modeSyntheticBtn" class="mode-btn" data-mode="synthetic">
+                    <span class="icon">🧪</span> Controlled Test
+                </button>
+            </div>
+        </div>
+
+        <div class="nav-right">
+            <button id="startDetectionBtn" class="btn btn-primary">
+                <span class="btn-icon">▶</span> Start Detection
+            </button>
+            <button id="stopDetectionBtn" class="btn btn-danger" disabled>
+                <span class="btn-icon">⏹</span> Stop Detection
+            </button>
+            <button id="calibrateBtn" class="btn btn-secondary" title="Calibrate vehicle baseline">
+                <span class="btn-icon">⚖</span> Calibrate
+            </button>
+            <button id="qrModalBtn" class="btn btn-ghost" title="Connect Phone via Wi-Fi">
+                <span class="btn-icon">🔗</span> Phone Sync
+            </button>
+            <button id="resetDemoBtn" class="btn btn-ghost-danger" title="Clear Demo Data">
+                <span class="btn-icon">🔄</span> Reset
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Container Layout -->
+    <main class="dashboard-main">
+        <!-- Sub-header Alert / Notification Banner -->
+        <div id="noticeBanner" class="notice-banner hidden">
+            <span id="noticeIcon" class="notice-icon">ℹ️</span>
+            <span id="noticeText" class="notice-text">Notice</span>
+            <button id="closeNoticeBtn" class="notice-close">&times;</button>
+        </div>
+
+        <!-- Mode Specific Control Strips -->
+        <!-- 1. CSV Replay Control Strip (shown only when in CSV mode) -->
+        <div id="csvControlStrip" class="control-strip hidden">
+            <div class="strip-section">
+                <label class="strip-label">Select Sample Scenario:</label>
+                <select id="csvDatasetSelect" class="strip-select">
+                    <option value="data/sample_pothole.csv">Service Lane — Pothole Impacts (Medium & High)</option>
+                    <option value="data/sample_speedbreaker.csv">Potheri Railway Stn — Speed Breaker</option>
+                    <option value="data/sample_normal.csv">GST Road — Normal Smooth Asphalt</option>
+                </select>
+                <button id="loadPresetCsvBtn" class="btn btn-sm btn-outline">Load Preset</button>
+            </div>
+            <div class="strip-section file-upload-section">
+                <label for="customCsvInput" class="btn btn-sm btn-outline">Upload Custom CSV</label>
+                <input type="file" id="customCsvInput" accept=".csv" class="hidden">
+                <span id="customFileName" class="file-name-label">No file loaded</span>
+            </div>
+            <div class="strip-section replay-controls">
+                <label class="strip-label">Speed:</label>
+                <div class="btn-group">
+                    <button class="btn btn-xs speed-btn" data-speed="1">1x</button>
+                    <button class="btn btn-xs speed-btn active" data-speed="2">2x</button>
+                    <button class="btn btn-xs speed-btn" data-speed="5">5x</button>
+                </div>
+                <button id="csvReplayToggleBtn" class="btn btn-sm btn-primary">Start Replay</button>
+                <div class="progress-bar-wrap">
+                    <div id="csvProgressBar" class="progress-bar-fill" style="width: 0%;"></div>
+                </div>
+                <span id="csvProgressText" class="progress-text">0 / 0</span>
+            </div>
+        </div>
+
+        <!-- 2. Synthetic Test Control Strip (shown in synthetic mode) -->
+        <div id="syntheticControlStrip" class="control-strip hidden">
+            <span class="strip-label"><strong>Controlled Road Signal Injector:</strong> (Labeled as Synthetic Test)</span>
+            <div class="strip-buttons">
+                <button id="simSmoothBtn" class="btn btn-sm btn-outline">Smooth Road (Baseline)</button>
+                <button id="simSpeedBreakerBtn" class="btn btn-sm btn-warning">Speed Breaker Wave</button>
+                <button id="simMedPotholeBtn" class="btn btn-sm btn-amber">Medium Pothole Impact</button>
+                <button id="simHighPotholeBtn" class="btn btn-sm btn-danger">Severe High-Impact Pothole</button>
+            </div>
+        </div>
+
+        <!-- Metric Statistics Cards -->
+        <section class="stats-grid">
+            <div class="card stat-card">
+                <div class="stat-header">
+                    <span class="stat-title">TOTAL EVENTS</span>
+                    <span class="stat-icon">📊</span>
+                </div>
+                <div class="stat-value" id="statTotalEvents">0</div>
+                <div class="stat-sub">Across all trips</div>
+            </div>
+
+            <div class="card stat-card alert-high">
+                <div class="stat-header">
+                    <span class="stat-title">HIGH IMPACT</span>
+                    <span class="stat-badge badge-high">&ge; 11.5 m/s²</span>
+                </div>
+                <div class="stat-value text-danger" id="statHighEvents">0</div>
+                <div class="stat-sub">Severe road-impact shocks</div>
+            </div>
+
+            <div class="card stat-card alert-med">
+                <div class="stat-header">
+                    <span class="stat-title">MEDIUM IMPACT</span>
+                    <span class="stat-badge badge-med">6.5 - 11.5 m/s²</span>
+                </div>
+                <div class="stat-value text-warning" id="statMedEvents">0</div>
+                <div class="stat-sub">Moderate bumps / jolts</div>
+            </div>
+
+            <div class="card stat-card alert-hazards">
+                <div class="stat-header">
+                    <span class="stat-title">MAPPED HAZARDS</span>
+                    <span class="stat-icon">📍</span>
+                </div>
+                <div class="stat-value text-accent" id="statTotalHazards">0</div>
+                <div class="stat-sub">Geographically clustered (20m)</div>
+            </div>
+        </section>
+
+        <!-- Main Middle Split: Live Sensor & Shockwave (Left) + Interactive Map (Right) -->
+        <div class="grid-layout">
+            <!-- Left Column: Sensors & Visualizers -->
+            <div class="column-left">
+                <!-- Live Telemetry Card -->
+                <div class="card telemetry-card">
+                    <div class="card-header">
+                        <h2 class="card-title">Live Smartphone Telemetry</h2>
+                        <span id="samplingRateBadge" class="sensor-rate-badge">0.0 Hz</span>
+                    </div>
+
+                    <!-- Gauges & Numerical Data -->
+                    <div class="telemetry-grid">
+                        <div class="telemetry-item">
+                            <span class="telemetry-label">X-AXIS</span>
+                            <span class="telemetry-val" id="accelX">0.00</span>
+                            <div class="meter-bar"><div id="meterX" class="meter-fill"></div></div>
+                        </div>
+                        <div class="telemetry-item">
+                            <span class="telemetry-label">Y-AXIS</span>
+                            <span class="telemetry-val" id="accelY">0.00</span>
+                            <div class="meter-bar"><div id="meterY" class="meter-fill"></div></div>
+                        </div>
+                        <div class="telemetry-item">
+                            <span class="telemetry-label">Z-AXIS</span>
+                            <span class="telemetry-val" id="accelZ">9.81</span>
+                            <div class="meter-bar"><div id="meterZ" class="meter-fill"></div></div>
+                        </div>
+                    </div>
+
+                    <!-- Computed Magnitudes -->
+                    <div class="computed-grid">
+                        <div class="computed-box">
+                            <span class="c-label">TOTAL MAGNITUDE (A)</span>
+                            <span class="c-formula">√(x² + y² + z²)</span>
+                            <span class="c-val" id="rawMagVal">9.81 m/s²</span>
+                        </div>
+                        <div class="computed-box highlight-box">
+                            <span class="c-label">DYNAMIC ACCELERATION</span>
+                            <span class="c-formula">|A - 9.81| (Gravity Removed)</span>
+                            <span class="c-val dynamic-val" id="dynAccelVal">0.00 m/s²</span>
+                        </div>
+                    </div>
+
+                    <!-- GPS Location Strip -->
+                    <div class="gps-strip">
+                        <div class="gps-left">
+                            <span class="gps-icon">🛰️</span>
+                            <span class="gps-label">GPS LOCATION:</span>
+                            <span class="gps-coords" id="gpsCoords">12.823050, 80.044200 (SRM Campus)</span>
+                        </div>
+                        <div class="gps-right">
+                            <span class="gps-acc-badge badge-good" id="gpsAccuracyBadge">Acc: ± 5.0m</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Shockwave & Waveform Profile Card -->
+                <div class="card shockwave-card">
+                    <div class="card-header">
+                        <div class="title-with-disclaimer">
+                            <h2 class="card-title">Impact Shockwave & Waveform Profile</h2>
+                            <span class="scientific-disclaimer">⚠️ Measured acceleration profile — not 3D physical depth</span>
+                        </div>
+                        <span id="lastEventSeverityBadge" class="severity-pill badge-none">No Impact</span>
+                    </div>
+
+                    <div class="shockwave-container">
+                        <!-- Ripple canvas visualizer -->
+                        <div class="canvas-wrapper">
+                            <canvas id="shockwaveCanvas" width="400" height="180"></canvas>
+                            <div id="shockwaveOverlay" class="shockwave-overlay">
+                                <div id="shockwaveRing" class="shockwave-ring"></div>
+                                <div class="shockwave-center">
+                                    <span id="impactPeakText" class="impact-peak-text">0.0</span>
+                                    <span class="impact-peak-unit">m/s² peak</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Impact Event Details Box -->
+                        <div class="impact-details-box">
+                            <div class="detail-row">
+                                <span class="d-label">Suspected Hazard:</span>
+                                <span class="d-val text-accent" id="impactHazardType">--</span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="d-label">Peak Jerk / Crest:</span>
+                                <span class="d-val" id="impactJerk">--</span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="d-label">Detection Confidence:</span>
+                                <span class="d-val" id="impactConfidence">--</span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="d-label">Coordinates:</span>
+                                <span class="d-val coords-font" id="impactLocation">--</span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="d-label">Timestamp:</span>
+                                <span class="d-val" id="impactTime">--</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Real-time Chart.js Waveform Card -->
+                <div class="card chart-card">
+                    <div class="card-header">
+                        <h2 class="card-title">Real-Time Acceleration Stream (30s Window)</h2>
+                        <div class="chart-legend-custom">
+                            <span class="legend-item"><span class="dot dyn-dot"></span> Dynamic (A_dyn)</span>
+                            <span class="legend-item"><span class="dot z-dot"></span> Z-Axis</span>
+                            <span class="legend-item"><span class="dot thresh-dot"></span> High Thresh (11.5)</span>
+                        </div>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="liveChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Interactive Leaflet Map & Recent Events -->
+            <div class="column-right">
+                <!-- Interactive Hazard Map Card -->
+                <div class="card map-card">
+                    <div class="card-header">
+                        <div class="map-title-row">
+                            <h2 class="card-title">Road Hazard Geospatial Map</h2>
+                            <span class="map-area-tag">SRM Kattankulathur • Potheri • GST Road</span>
+                        </div>
+                        <div class="map-actions">
+                            <button id="mapCenterCampusBtn" class="btn btn-xs btn-outline">Center SRM</button>
+                            <button id="mapCenterUserBtn" class="btn btn-xs btn-outline">My Location</button>
+                            <button id="refreshMapBtn" class="btn btn-xs btn-outline">Refresh Hazards</button>
+                        </div>
+                    </div>
+
+                    <!-- Map Container -->
+                    <div id="hazardMap" class="map-view"></div>
+
+                    <!-- Map Legend Bar -->
+                    <div class="map-legend">
+                        <span class="legend-title">Hazard Severity:</span>
+                        <div class="legend-scale">
+                            <span class="legend-marker red-marker">●</span> High Impact (&ge; 11.5 m/s²)
+                            <span class="legend-marker amber-marker">●</span> Medium Impact (6.5 - 11.5 m/s²)
+                            <span class="legend-marker green-marker">●</span> Minor Vibration (&lt; 6.5 m/s²)
+                        </div>
+                        <div class="legend-notes">
+                            <span>Blue circle: Grouping cluster radius (20m)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Event Audit Log / History Card -->
+                <div class="card history-card">
+                    <div class="card-header">
+                        <h2 class="card-title">Recent Road Impact Detections</h2>
+                        <span id="historyCountBadge" class="table-count-badge">0 detections</span>
+                    </div>
+
+                    <div class="table-wrapper">
+                        <table class="event-table">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Severity</th>
+                                    <th>Classification</th>
+                                    <th>Peak Accel</th>
+                                    <th>Confidence</th>
+                                    <th>Coordinates</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="eventTableBody">
+                                <tr class="empty-row">
+                                    <td colspan="7">No road impact events detected yet. Click "Start Detection" or run a demo scenario.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Calibration Modal -->
+    <div id="calibrationModal" class="modal-backdrop hidden">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>Vehicle Baseline Calibration</h3>
+                <button id="closeCalibrateModalBtn" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>To avoid false positives from vehicle engine vibration or different device mountings, record a 5-second baseline while stationary or cruising smoothly.</p>
+                <div class="calibration-progress-wrap">
+                    <div id="calibProgressBar" class="calib-progress-fill" style="width: 0%;"></div>
+                </div>
+                <div id="calibStatusText" class="calib-status-text">Click "Start Calibration" and keep vehicle steady.</div>
+                <div class="calib-stats-preview hidden" id="calibStatsPreview">
+                    <div class="c-stat-row"><span>Baseline Mean:</span> <strong id="calibMean">--</strong></div>
+                    <div class="c-stat-row"><span>Noise Std Dev:</span> <strong id="calibStd">--</strong></div>
+                    <div class="c-stat-row"><span>New Low Threshold:</span> <strong id="calibThreshLow">--</strong></div>
+                    <div class="c-stat-row"><span>New Medium Threshold:</span> <strong id="calibThreshMed">--</strong></div>
+                    <div class="c-stat-row"><span>New High Threshold:</span> <strong id="calibThreshHigh">--</strong></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="startCalibBtn" class="btn btn-primary">Start 5s Baseline</button>
+                <button id="doneCalibBtn" class="btn btn-outline" disabled>Done</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Phone QR Code & Sync Modal -->
+    <div id="qrModal" class="modal-backdrop hidden">
+        <div class="modal-box qr-modal-box">
+            <div class="modal-header">
+                <h3>Connect Smartphone via Wi-Fi</h3>
+                <button id="closeQrModalBtn" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body qr-modal-body">
+                <p>Connect your smartphone to the same Wi-Fi network and open the URL below, or scan the QR code:</p>
+                <div class="qr-code-wrapper">
+                    <img id="qrCodeImage" src="" alt="Smartphone QR Code" width="160" height="160">
+                </div>
+                <div class="qr-url-box">
+                    <span id="phoneAccessUrl" class="qr-url-text">http://localhost:5000</span>
+                    <button id="copyPhoneUrlBtn" class="btn btn-xs btn-outline">Copy</button>
+                </div>
+                <div class="qr-tips">
+                    <p><strong>Tips for Mobile Browsers:</strong></p>
+                    <ul>
+                        <li><strong>iOS (Safari):</strong> Tap "Start Detection" to trigger the Motion & Orientation permission prompt.</li>
+                        <li><strong>Android (Chrome):</strong> Sensor permissions are typically granted automatically on localhost / LAN.</li>
+                        <li>Keep the phone firmly mounted or resting on vehicle dashboard/cupholder.</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="charts.js"></script>
+    <script src="map.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
