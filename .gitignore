@@ -23,3 +23,5 @@ htmlcov/
 # CCTV & Video Artifacts
 backend/cctv_frames/*.jpg
 data/uploads/
+
+.vercel
